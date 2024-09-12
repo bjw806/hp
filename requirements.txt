@@ -1,0 +1,9 @@
+gym-trading-env
+torch
+torchvision
+torchaudio
+gputil
+ipywidgets
+jupyterlab
+matplotlib
+git+https://github.com/Toni-SM/skrl.git@develop
