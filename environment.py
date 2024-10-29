@@ -282,7 +282,7 @@ class DiscretedTradingEnv(gym.Env):
         self._limit_orders[position] = {"limit": limit, "persistent": persistent}
 
     def step(self, position_index=None):
-        pos = self.positions[position_index]
+        pos = self.positions[position_index[0]]
         is_position_changed = position_index is not None and position_index != self.last_trade_position
         is_position_cleared = False
 
