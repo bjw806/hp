@@ -45,7 +45,7 @@ def basic_penalty_function(history: History):
     return 0
 
 
-def reward_only_position_changed(history):
+def reward_only_position_changed(history: History):
     if history["portfolio_valuation", -1] <= 0:
         return -1
 
@@ -61,11 +61,11 @@ def reward_only_position_changed(history):
         return position_roe + total_roe
 
 
-def dynamic_feature_last_position_taken(history):
+def dynamic_feature_last_position_taken(history: History):
     return history["position", -1]
 
 
-def dynamic_feature_real_position(history):
+def dynamic_feature_real_position(history: History):
     return history["real_position", -1]
 
 
@@ -110,6 +110,7 @@ class DiscretedTradingEnv(gym.Env):
         self.last_trade_position = 0
         self.last_trade_position_index = 0
         self.force_clear = force_clear
+        self.pc_counter = 0
 
         # env
         self.max_episode_duration = max_episode_duration
@@ -120,24 +121,24 @@ class DiscretedTradingEnv(gym.Env):
         self._set_df(df)
         self.action_space = spaces.Discrete(len(positions))
         self.observation_space = spaces.Dict({
-            "equity": spaces.Box(low=0, high=np.inf, shape=(1,), dtype=np.float32),
-            "total_ROE": spaces.Box(low=-1, high=np.inf, shape=(1,), dtype=np.float32),
-            # "position": spaces.Box(
-            #     low=-np.inf, high=np.inf, shape=(1,), dtype=np.int64
+            # "equity": spaces.Box(low=0, high=np.inf, shape=(1,), dtype=np.float32),
+            # "total_ROE": spaces.Box(low=-1, high=np.inf, shape=(1,), dtype=np.float32),
+            "position": spaces.Box(
+                low=-np.inf, high=np.inf, shape=(1,), dtype=np.int64
+            ),
+            # "PNL": spaces.Box(
+            #     low=-np.inf,
+            #     high=np.inf,
+            #     shape=(1,),
+            #     dtype=np.float32,
             # ),
-            "PNL": spaces.Box(
-                low=-np.inf,
-                high=np.inf,
-                shape=(1,),
-                dtype=np.float32,
-            ),
-            "ROE": spaces.Box(low=-1, high=np.inf, shape=(1,), dtype=np.float32),
-            "entry_price": spaces.Box(
-                low=0,
-                high=np.inf,
-                shape=(1,),
-                dtype=np.float32,
-            ),
+            # "ROE": spaces.Box(low=-1, high=np.inf, shape=(1,), dtype=np.float32),
+            # "entry_price": spaces.Box(
+            #     low=0,
+            #     high=np.inf,
+            #     shape=(1,),
+            #     dtype=np.float32,
+            # ),
             "features": spaces.Box(
                 low=-np.inf,
                 high=np.inf,
@@ -192,12 +193,12 @@ class DiscretedTradingEnv(gym.Env):
         )
 
         observation = {
-            "equity": np.float32(self.historical_info["portfolio_valuation", -1]),
-            "total_ROE": np.float32(self.historical_info["portfolio_valuation", -1] / self.portfolio_initial_value - 1),
-            # "position": np.int64(self.historical_info["position", -1]),
-            "PNL": np.float32(self.historical_info["PNL", -1]),
-            "ROE": np.float32(self.historical_info["ROE", -1]),
-            "entry_price": np.float32(self.historical_info["entry_price", -1]),
+            # "equity": np.float32(self.historical_info["portfolio_valuation", -1]),
+            # "total_ROE": np.float32(self.historical_info["portfolio_valuation", -1] / self.portfolio_initial_value - 1),
+            "position": np.int64(self.historical_info["position", -1]),
+            # "PNL": np.float32(self.historical_info["PNL", -1]),
+            # "ROE": np.float32(self.historical_info["ROE", -1]),
+            # "entry_price": np.float32(self.historical_info["entry_price", -1]),
             "features": self._obs_array[_step_index],
         }
 
@@ -206,6 +207,7 @@ class DiscretedTradingEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed, options=options)
 
+        self.pc_counter = 0
         self._step = 0
         self._position = (
             np.random.choice(self.positions) if self.initial_position == "random" else self.initial_position
@@ -233,7 +235,6 @@ class DiscretedTradingEnv(gym.Env):
             position_index=self.positions.index(self._position),
             position=self._position,
             real_position=self._position,
-            last_position_changed_idx=0,
             data=dict(zip(self._info_columns, self._info_array[self._idx])),
             portfolio_valuation=self.portfolio_initial_value,
             portfolio_distribution=self._portfolio.get_portfolio_distribution(),
@@ -243,7 +244,7 @@ class DiscretedTradingEnv(gym.Env):
             entry_valuation=self.portfolio_initial_value,
             PNL=0,
             ROE=0,
-            prev_position_valuation=self.portfolio_initial_value,
+            pc_counter=0,
         )
 
         return self._get_obs(), self.historical_info[0]
@@ -264,6 +265,8 @@ class DiscretedTradingEnv(gym.Env):
         if position != self._position:
             self._trade(position)
             self.last_trade_position_index = self._idx + 1
+            self.pc_counter += 1 
+            self.last_trade_position = position
 
     def _take_action_order_limit(self):
         if len(self._limit_orders) > 0:
@@ -282,28 +285,17 @@ class DiscretedTradingEnv(gym.Env):
         self._limit_orders[position] = {"limit": limit, "persistent": persistent}
 
     def step(self, position_index=None):
-        pos = self.positions[position_index[0]]
-        is_position_changed = position_index is not None and position_index != self.last_trade_position
-        is_position_cleared = False
-
-        if self._idx - self.historical_info["last_position_changed_idx"][-1] > 60 and not is_position_changed:
-            if pos == 0:
-                ls = self.positions
-                ls.remove(0)
-                pos = np.random.choice(ls)
-            else:
-                pos = 0
-            is_position_cleared = True
-
-        if position_index is not None:
-            self._take_action(pos)
+        position_index = position_index[0]
+        pos = self.positions[position_index]
+        is_position_changed = pos != self.last_trade_position
 
         self._idx += 1
         self._step += 1
-
+        self._take_action(pos)
         self._take_action_order_limit()
         price = self._get_price()
         self._portfolio.update_interest(borrow_interest_rate=self.borrow_interest_rate)
+        
         portfolio_value = self._portfolio.valorisation(price)
         portfolio_distribution = self._portfolio.get_portfolio_distribution()
 
@@ -318,9 +310,6 @@ class DiscretedTradingEnv(gym.Env):
 
         entry_price = self.historical_info["entry_price", -1] if not is_position_changed else price
         entry_valuation = self.historical_info["entry_valuation", -1] if not is_position_changed else portfolio_value
-        prev_position_valuation = (
-            self.historical_info["portfolio_valuation", -1] if not is_position_changed else portfolio_value
-        )
 
         self.historical_info.add(
             idx=self._idx,
@@ -329,41 +318,18 @@ class DiscretedTradingEnv(gym.Env):
             position_index=position_index,
             position=self._position,
             real_position=self._portfolio.real_position(price),
-            last_position_changed_idx=(
-                self.historical_info["last_position_changed_idx"][-1]
-                if is_position_changed or is_position_cleared
-                else self._idx
-            ),
             data=dict(zip(self._info_columns, self._info_array[self._idx])),
             portfolio_valuation=portfolio_value,
             portfolio_distribution=portfolio_distribution,
-            reward=0,
+            reward=self.reward_function(self.historical_info),
             entry_price=entry_price,
             entry_valuation=entry_valuation,
-            PNL=0,
-            ROE=0,
-            prev_position_valuation=prev_position_valuation,
+            PNL=portfolio_value - entry_valuation,
+            ROE=(portfolio_value / entry_valuation) - 1,
+            pc_counter=self.pc_counter,
         )
 
-        # if done:
-        #     reward = -1 * abs(portfolio_value - entry_valuation)
-        # else:
-        #     reward = (
-        #         self.reward_function(self.historical_info)
-        #         if is_position_changed
-        #         else self.penalty_function(self.historical_info)
-        #     )
-
-        reward = self.reward_function(self.historical_info)
-
-        self.historical_info["reward", -1] = reward
-        self.historical_info["PNL", -1] = (
-            self.historical_info["portfolio_valuation", -1] - self.historical_info["entry_valuation", -1]
-        )
-
-        self.historical_info["ROE", -1] = (
-            self.historical_info["portfolio_valuation", -1] / self.historical_info["entry_valuation", -1] - 1
-        )
+        # print(self.historical_info["pc_counter"])
 
         if done or truncated:
             self.calculate_metrics()
