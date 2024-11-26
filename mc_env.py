@@ -1,4 +1,5 @@
 import datetime
+from doctest import DocFileCase
 import glob
 import os
 import warnings
@@ -419,6 +420,11 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
         self.preprocess = preprocess
         self.episodes_between_dataset_switch = episodes_between_dataset_switch
         self.dataset_pathes = glob.glob(self.dataset_dir)
+
+        for k, v in enumerate(self.dataset_pathes):
+            if "binance-BTCUSDT-15m.pkl" in v:
+                self.dataset_pathes.pop(k-1)
+
         self.dataset_nb_uses = np.zeros(shape=(len(self.dataset_pathes),))
         super().__init__(self.next_dataset(), *args, **kwargs)
 
@@ -434,7 +440,16 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
         self.dataset_nb_uses[random_int] += 1  # Update nb use counts
 
         self.name = Path(dataset_path).name
-        return self.preprocess(pd.read_pickle(dataset_path))
+        BTCUSDT_PATH = "/".join(dataset_path.split("/")[:-1]+["binance-BTCUSDT-15m.pkl"])
+        BTCUSDT = pd.read_pickle(BTCUSDT_PATH)
+        BTCUSDT = pd.DataFrame(
+            {"feature_btc_log_returns": np.log(BTCUSDT.close).diff().dropna()}
+        )
+
+        target = self.preprocess(pd.read_pickle(dataset_path))
+        df = pd.concat([BTCUSDT, target], axis=1).fillna(0)
+
+        return df
 
     def reset(self, seed=None, options=None):
         self._episodes_on_this_dataset += 1
