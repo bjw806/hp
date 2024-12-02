@@ -1,5 +1,4 @@
 import datetime
-from doctest import DocFileCase
 import glob
 import os
 import warnings
@@ -17,9 +16,25 @@ warnings.filterwarnings("error")
 
 
 def basic_reward_function(history: History):
-    return np.log(
-        history["portfolio_valuation", -1] / history["portfolio_valuation", -2]
-    )
+    if len(history) > 2:
+        return (
+            history["portfolio_valuation", -1] - history["entry_valuation", -1]
+        ) * 0.01
+    else:
+        return 0
+
+
+def basic_reward_function(history: History):
+    roe = history["portfolio_valuation", -1] / (history["entry_valuation", -1] + 1e-8) - 1
+    total_roe = history["portfolio_valuation", -1] / history["portfolio_valuation", 0]
+    reward = (roe**2) if roe > 0 else -(roe**2)  # + (total_roe ** 2)
+    return reward
+
+
+# def basic_reward_function(history: History):
+#     return (
+#         history["portfolio_valuation", -1] - history["portfolio_valuation", 0]
+#     ) / history["portfolio_valuation", 0]
 
 
 def basic_penalty_function(history: History):
@@ -88,7 +103,7 @@ class DiscretedTradingEnv(gym.Env):
             dynamic_feature_last_position_taken,
             # dynamic_feature_real_position,
         ],
-        reward_function: Callable = reward_only_position_changed,
+        reward_function: Callable = basic_reward_function,
         penalty_function: Callable = basic_penalty_function,
         window_size: int = None,
         trading_fees: float = 0.0001,
@@ -116,10 +131,9 @@ class DiscretedTradingEnv(gym.Env):
         self.borrow_interest_rate = borrow_interest_rate
         self.portfolio_initial_value = float(portfolio_initial_value)
         self.initial_position = initial_position
-        self.last_trade_position = 0
-        self.last_trade_position_index = 0
         self.force_clear = force_clear
         self.pc_counter = 0
+        self.clearing = False
 
         # env
         self.max_episode_duration = max_episode_duration
@@ -131,13 +145,24 @@ class DiscretedTradingEnv(gym.Env):
         self.action_space = spaces.MultiDiscrete(
             [len(self.positions), len(self.multiplier)]
         )
-        self.observation_space = spaces.Box(
-            low=-np.inf,
-            high=np.inf,
-            shape=[self.window_size, self._nb_features]
-            if window_size
-            else [self._nb_features],
-            dtype=np.float32,
+        self.observation_space = spaces.Dict(
+            {
+                "total_ROE": spaces.Box(
+                    low=-1, high=np.inf, shape=(1,), dtype=np.float32
+                ),
+                "position": spaces.Box(
+                    low=-np.inf, high=np.inf, shape=(1,), dtype=np.int64
+                ),
+                "ROE": spaces.Box(low=-1, high=np.inf, shape=(1,), dtype=np.float32),
+                "features": spaces.Box(
+                    low=-np.inf,
+                    high=np.inf,
+                    shape=[self.window_size, self._nb_features]
+                    if window_size
+                    else [self._nb_features],
+                    dtype=np.float32,
+                ),
+            }
         )
 
     def _set_df(self, df):
@@ -194,8 +219,16 @@ class DiscretedTradingEnv(gym.Env):
             else np.arange(self._idx + 1 - self.window_size, self._idx + 1)
         )
 
-        observation = self._obs_array[_step_index]
-
+        observation = {
+            "total_ROE": np.float32(
+                self.historical_info["portfolio_valuation", -1]
+                / self.portfolio_initial_value
+                - 1
+            ),
+            "position": np.int64(self.historical_info["position", -1]),
+            "ROE": np.float32(self.historical_info["ROE", -1]),
+            "features": self._obs_array[_step_index],
+        }
         return observation
 
     def reset(self, seed=None, options=None):
@@ -204,7 +237,7 @@ class DiscretedTradingEnv(gym.Env):
         self.pc_counter = 0
         self._step = 0
         self._position = (
-            np.random.choice(self.positions)
+            np.random.choice(self.positions) * np.random.choice(self.multiplier)
             if self.initial_position == "random"
             else self.initial_position
         )
@@ -235,7 +268,7 @@ class DiscretedTradingEnv(gym.Env):
             real_position=self._position,
             data=dict(zip(self._info_columns, self._info_array[self._idx])),
             portfolio_valuation=self.portfolio_initial_value,
-            portfolio_distribution=self._portfolio.get_portfolio_distribution(),
+            # portfolio_distribution=self._portfolio.get_portfolio_distribution(),
             reward=0,
             #
             entry_price=self._get_price(),
@@ -262,9 +295,7 @@ class DiscretedTradingEnv(gym.Env):
     def _take_action(self, position):
         if position != self._position:
             self._trade(position)
-            self.last_trade_position_index = self._idx + 1
             self.pc_counter += 1
-            self.last_trade_position = position
 
     def _take_action_order_limit(self):
         if len(self._limit_orders) > 0:
@@ -284,7 +315,7 @@ class DiscretedTradingEnv(gym.Env):
 
     def step(self, position_index=None):
         pos = self.positions[position_index[0]] * self.multiplier[position_index[1]]
-        is_position_changed = pos != self.last_trade_position
+        is_position_changed = pos != self._position
 
         self._idx += 1
         self._step += 1
@@ -294,12 +325,13 @@ class DiscretedTradingEnv(gym.Env):
         self._portfolio.update_interest(borrow_interest_rate=self.borrow_interest_rate)
 
         portfolio_value = self._portfolio.valorisation(price)
-        portfolio_distribution = self._portfolio.get_portfolio_distribution()
+        # portfolio_distribution = self._portfolio.get_portfolio_distribution()
 
         done, truncated = False, False
 
         if portfolio_value <= 0:
             done = True
+            self.clearing = True
             portfolio_value = 1e-8
         if self._idx >= len(self.df) - 1:
             truncated = True
@@ -329,29 +361,28 @@ class DiscretedTradingEnv(gym.Env):
             real_position=self._portfolio.real_position(price),
             data=dict(zip(self._info_columns, self._info_array[self._idx])),
             portfolio_valuation=portfolio_value,
-            portfolio_distribution=portfolio_distribution,
-            reward=(
-                self.reward_function(self.historical_info) + 1
-                if is_position_changed
-                else -1
-            ),
+            # portfolio_distribution=portfolio_distribution,
+            reward=0,  ##  이전꺼랑 비교해서 커졌냐 작아졌냐만 판단. value는 무시
             entry_price=entry_price,
             entry_valuation=entry_valuation,
             PNL=portfolio_value - entry_valuation,
             ROE=(portfolio_value / entry_valuation) - 1,
             pc_counter=self.pc_counter,
+            # unrealized_PNL=(portfolio_value / entry_valuation) - 1,
+            # realized_PNL=0,
         )
+        self.historical_info["reward", -1] = self.reward_function(self.historical_info)
 
         # print(self.historical_info["pc_counter"])
 
-        if done or truncated:
+        if truncated:
             self.calculate_metrics()
             self.log()
 
         return (
             self._get_obs(),
             self.historical_info["reward", -1],
-            done,
+            False,
             truncated,
             self.historical_info[-1],
         )
@@ -423,7 +454,7 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
 
         for k, v in enumerate(self.dataset_pathes):
             if "binance-BTCUSDT-15m.pkl" in v:
-                self.dataset_pathes.pop(k-1)
+                self.dataset_pathes.pop(k - 1)
 
         self.dataset_nb_uses = np.zeros(shape=(len(self.dataset_pathes),))
         super().__init__(self.next_dataset(), *args, **kwargs)
@@ -440,7 +471,9 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
         self.dataset_nb_uses[random_int] += 1  # Update nb use counts
 
         self.name = Path(dataset_path).name
-        BTCUSDT_PATH = "/".join(dataset_path.split("/")[:-1]+["binance-BTCUSDT-15m.pkl"])
+        BTCUSDT_PATH = "/".join(
+            dataset_path.split("/")[:-1] + ["binance-BTCUSDT-15m.pkl"]
+        )
         BTCUSDT = pd.read_pickle(BTCUSDT_PATH)
         BTCUSDT = pd.DataFrame(
             {"feature_btc_log_returns": np.log(BTCUSDT.close).diff().dropna()}

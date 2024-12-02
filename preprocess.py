@@ -113,15 +113,17 @@ def preprocess(df):
 
     # df_robust = robust(df)
 
-    dataframe["feature_RSI_6"] = RSI(dataframe, periods=6) * 0.01
+    # dataframe["feature_RSI_6"] = RSI(dataframe, periods=6) * 0.01
     # df_robust["feature_RSI_12"] = RSI(df, periods=12)
     # df_robust["feature_RSI_24"] = RSI(df, periods=24)
 
-    dataframe["feature_RVOL"] = RVOL(dataframe)
+    # dataframe["feature_RVOL"] = RVOL(dataframe)
     # dataframe["feature_VO"] = VO(dataframe)
-    dataframe["feature_CMF"] = CMF(dataframe)
+    # dataframe["feature_CMF"] = CMF(dataframe)
     # dataframe["feature_VWAP"] = VWAP(dataframe)
     # dataframe["feature_OBV"] = OBV(dataframe)
+
+    dataframe = ichimoku(dataframe)
 
     return dataframe.fillna(0)
 
@@ -186,3 +188,15 @@ def OBV(df):
     direction[df.close.diff() == 0] = 0
     obv = (df.volume * direction).cumsum()
     return pd.Series(obv, index=df.index)
+
+
+def ichimoku(df):
+    df['feature_tenkan'] = (df.high.rolling(window=9).max() + df.low.rolling(window=9).min()) / 2
+    df['feature_kijun'] = (df.high.rolling(window=26).max() + df.low.rolling(window=26).min()) / 2
+    df['feature_senkou_1'] = ((df.feature_tenkan + df.feature_kijun) / 2).shift(26)
+    df['feature_senkou_2'] = (
+        (df.high.rolling(window=52).max() + df.low.rolling(window=52).min()) / 2
+    ).shift(26)
+
+    df['feature_chikou'] = df.close.shift(-26)
+    return df
