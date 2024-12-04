@@ -19,9 +19,24 @@ def basic_reward_function(history: History):
     roe = (
         history["portfolio_valuation", -1] / (history["entry_valuation", -1] + 1e-8) - 1
     )
-    total_roe = history["portfolio_valuation", -1] / history["portfolio_valuation", 0]
-    reward = (roe**2) if roe > 0 else -(roe**2)  # + (total_roe ** 2)
+    total_roe = history["portfolio_valuation", -1] / history["portfolio_valuation", 0] - 1
+    reward = (roe**2) if roe > 0 else -(roe**2) + ((total_roe ** 2) if total_roe > 0 else -(total_roe ** 2)) * 0.1
     return reward
+
+
+# def basic_reward_function(history: History):
+#     mean_return = np.mean(history["ROE"])
+#     std_return = np.std(history["ROE"])
+
+#     if std_return == 0:
+#         return 0.0
+    
+#     risk_free_rate = 0
+#     sharpe_ratio = (mean_return - risk_free_rate) / std_return
+
+#     reward = sharpe_ratio ** 2 if sharpe_ratio > 0 else -(sharpe_ratio ** 2)
+
+#     return reward
 
 
 def dynamic_feature_last_position_taken(history: History):
@@ -364,7 +379,7 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
         *args,
         preprocess=lambda df: df,
         episodes_between_dataset_switch=1,
-        btc_index=True,
+        btc_index=False,
         **kwargs,
     ):
         self.dataset_dir = dataset_dir
