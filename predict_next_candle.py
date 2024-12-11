@@ -128,10 +128,24 @@ class DiscretedTradingEnv(gym.Env):
                     "feature_high_lr",
                     "feature_low_lr",
                     "feature_log_returns",
+                    "high",
+                    "low",
+                    "close",
                 ]
             ],
             dtype=np.float32,
         )[self._idx + 1]
+
+        raw_predict_candle = np.array(
+            self.df[
+                [
+                    "close",
+                ]
+            ],
+            dtype=np.float32,
+        )[self._idx][0] * np.exp(hlc)
+
+        MAPE = abs(raw_predict_candle / lr_current_candle[3:] - 1) * 100
 
         # MSE = (raw_current_candle - raw_predict_candle)
         # MAPE = (np.abs((raw_current_candle - raw_predict_candle) / raw_current_candle)) * 100
@@ -183,7 +197,8 @@ class DiscretedTradingEnv(gym.Env):
             step=self._step,
             date=self.df.index.values[self._idx],
             data=dict(zip(self._info_columns, self._info_array[self._idx])),
-            reward=-(abs(hlc - lr_current_candle).sum()),
+            reward=-MAPE.sum(),
+            # -(abs(hlc - lr_current_candle).sum() * 10),
             # -((abs(np.array(ohlc) - data) + 1) ** 2).sum() - 4
         )
 

@@ -14,6 +14,7 @@ from gymnasium import spaces
 from gym_trading_env.downloader import _download_symbol
 import ccxt.async_support as ccxt
 import asyncio
+
 warnings.filterwarnings("error")
 
 
@@ -89,7 +90,7 @@ class DiscretedTradingEnv(gym.Env):
         self.reward_function = reward_function
         self.window_size = window_size
         self._set_df()
-        self.action_space = spaces.Box(low=-np.inf, high=np.inf, shape=[4])
+        self.action_space = spaces.Box(low=-np.inf, high=np.inf, shape=[3])
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
@@ -108,21 +109,25 @@ class DiscretedTradingEnv(gym.Env):
         )
         until = int(datetime.datetime.now().timestamp() * 1e3)
 
-        btcdom = asyncio.run(_download_symbol(
-            exchange=exchange,
-            symbol="BTCDOM/USDT",
-            timeframe="15m",
-            since=since,
-            until=until,
-            # limit=30,
-        ))
-        eth = asyncio.run(_download_symbol(
-            exchange=exchange,
-            symbol="ETH/USDT",
-            timeframe="15m",
-            since=since,
-            until=until,
-        ))
+        btcdom = asyncio.run(
+            _download_symbol(
+                exchange=exchange,
+                symbol="BTCDOM/USDT",
+                timeframe="15m",
+                since=since,
+                until=until,
+                # limit=30,
+            )
+        )
+        eth = asyncio.run(
+            _download_symbol(
+                exchange=exchange,
+                symbol="ETH/USDT",
+                timeframe="15m",
+                since=since,
+                until=until,
+            )
+        )
 
         df = self.preprocess(eth)
 
@@ -266,7 +271,7 @@ class DiscretedTradingEnv(gym.Env):
     def add_limit_order(self, position, limit, persistent=False):
         self._limit_orders[position] = {"limit": limit, "persistent": persistent}
 
-    def step(self, ohlc=None):
+    def step(self, hlc=None):
         raw_obs_candle = np.array(
             self.df[
                 [
@@ -278,7 +283,7 @@ class DiscretedTradingEnv(gym.Env):
             ],
             dtype=np.float32,
         )[self._idx]
-        raw_predict_candle = np.exp(ohlc) * raw_obs_candle[3]
+        raw_predict_candle = np.exp(hlc) * raw_obs_candle[3]
 
         print(raw_obs_candle)
         print(raw_predict_candle)

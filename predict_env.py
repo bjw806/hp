@@ -86,7 +86,7 @@ class DiscretedTradingEnv(gym.Env):
         self.reward_function = reward_function
         self.window_size = window_size
         self._set_df(df)
-        self.action_space = spaces.Box(low=-np.inf, high=np.inf, shape=[4])
+        self.action_space = spaces.Box(low=-np.inf, high=np.inf, shape=[3])
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
@@ -231,14 +231,100 @@ class DiscretedTradingEnv(gym.Env):
     def add_limit_order(self, position, limit, persistent=False):
         self._limit_orders[position] = {"limit": limit, "persistent": persistent}
 
-    def step(self, ohlc=None):
+    def step(self, hlc=None):
+        """
+                다음 캔들(feature) 정보 불러오기:
+        lr_current_candle 변수를 통해 현재 스텝 다음 시점의 캔들 관련 feature들을 가져옵니다.
+        이때 사용되는 feature로는 feature_high_lr, feature_low_lr, feature_log_returns, high, low, close 등이 있으며, 이들은 다음 시점(self._idx + 1)의 값을 참고합니다.
+
+        현재 캔들(관측) 정보 불러오기:
+        raw_obs_candle를 통해 현재 시점(self._idx)의 open, high, low, close 가격 정보를 가져옵니다.
+        이 값들은 현재 스텝에서의 실제 시장 상황을 반영합니다.
+
+        예측값(hlc)로부터 예상 가격 계산:
+        입력으로 받은 hlc(high, low, close에 대한 비율 변화 log-scale 예측치 가정)를 바탕으로 raw_predict_candle를 계산합니다.
+        hlc 값을 지수변환 후 현재 종가(raw_obs_candle[3])에 곱해 예측된 (예상) 고가, 저가, 종가를 추정합니다.
+
+        예측값 검증:
+        예측한 hlc가 유효한 구조를 가지고 있는지 검사합니다.
+
+        예: hlc[0] > 0 이어야 고가가 현재 종가보다 높다거나, hlc[1] < 0 이어야 저가가 종가보다 낮는 등, 혹은 예측한 close가 예측 high와 low 사이에 존재하는지 등의 제약을 검증합니다.
+        만약 이러한 조건이 어긋나면, 현재 스텝에서는 포지션을 잡지 않고 넘어갑니다(pos = 0).
+        포지션 방향 결정(예측 기반 전략 로직):
+        예측이 유효하다면, 롱과 숏 포지션 각각에 대한 기대 수익률(ROE)을 계산합니다.
+
+        long_expected_roe: 예측된 고가를 기준으로 롱에 진입했을 때 기대되는 수익률
+        short_expected_roe: 예측된 저가를 기준으로 숏에 진입했을 때 기대되는 수익률
+        현재 가지고 있는 포지션(self._position)을 토대로 다음을 결정합니다.
+
+        포지션이 이미 있을 경우:
+        목표 이익 도달(take_profit) 여부나 손절(stop_loss) 조건을 먼저 체크해 포지션 청산 여부 결정
+        청산하지 않는다면, 롱/숏 기대값 비교를 통해 포지션 유지, 변경 혹은 그대로 유지
+        포지션이 없을 경우:
+        롱이 유리한지, 숏이 유리한지 판단하고 그 방향으로 진입
+        이 단계에서 최종적으로 pos 값(포지션 방향: -1, 0, +1)을 결정합니다.
+
+        포지션 변경 여부 확인:
+        is_position_changed = pos != self._position를 통해 이번 스텝에서 포지션이 바뀌었는지 확인합니다.
+        이후 pos에 레버리지를 곱해 최종 포지션 크기를 결정하고 _take_action(pos)를 통해 실제 포지션을 업데이트합니다.
+
+        환경 진행:
+        self._idx와 self._step를 증가시켜 시뮬레이션을 다음 시점으로 진행합니다.
+
+        주문 처리 후 가격 갱신:
+        _take_action_order_limit()를 통해 지정가 주문 등의 처리 로직을 실행하고 _get_price()를 통해 현재 가격(또는 다음 가격)을 반영합니다.
+
+        금리 비용 업데이트:
+        self._portfolio.update_interest()를 통해 차입 금리(borrow_interest_rate)에 따른 이자 비용을 업데이트합니다.
+
+        포트폴리오 평가액 계산:
+        portfolio_value = self._portfolio.valorisation(price)를 통해 현재 포지션과 금리, 가격 변동을 반영한 포트폴리오 평가액을 계산합니다.
+
+        시뮬레이션 종료 조건 체크:
+
+        portfolio_value <= 0: 원금 전액 상실 → done = True
+        self._idx가 데이터 마지막에 도달 → truncated = True
+        self.max_episode_duration(최대 에피소드 길이)에 도달 → truncated = True
+        이를 통해 에피소드 종료 조건을 판별합니다.
+
+        진입 기준(Entry Valuation) 및 기록용 변수 설정:
+        포지션 변경이 있었다면, 그 시점의 price와 portfolio_value를 진입 시점 기준으로 삼습니다(entry_price 및 entry_valuation 갱신).
+        포지션 변경이 없었다면 이전 스텝의 entry_valuation을 유지합니다.
+
+        수익률, PNL, ROE 계산 및 기록:
+
+        PNL = portfolio_value - entry_valuation
+        ROE = (portfolio_value / entry_valuation) - 1
+        이를 계산한 뒤 historical_info.add()를 통해 이 스텝의 정보(가격, 포지션, PNL, ROE, reward 등)를 기록합니다.
+
+        트러케이션 시 메트릭 계산 및 로깅:
+        만약 이번 스텝에서 truncated = True라면, calculate_metrics()와 log()를 호출해 정리 작업을 수행합니다.
+
+        결과 반환:
+
+        관측값(obs) = _get_obs()
+        보상(reward) = 이번 스텝의 portfolio_value - entry_valuation 값 (또는 해당 로직 상 reward)
+        done, truncated, 현재 스텝에 대한 historical_info 항목을 반환합니다.
+        정리하자면, step() 메서드는
+
+        다음 시점의 특징 추출 →
+        현재 시점 관측값 불러오기 →
+        예측값 검증 및 포지션 결정 →
+        포지션 업데이트 및 환경 진행 →
+        가격, 금리, 포트폴리오 가치 업데이트 →
+        종료 조건 확인 →
+        결과 기록 및 반환
+        """
         lr_current_candle = np.array(
             self.df[
                 [
-                    "feature_open_lr",
+                    # "feature_open_lr",
                     "feature_high_lr",
                     "feature_low_lr",
                     "feature_log_returns",
+                    "high",
+                    "low",
+                    "close",
                 ]
             ],
             dtype=np.float32,
@@ -255,41 +341,45 @@ class DiscretedTradingEnv(gym.Env):
             ],
             dtype=np.float32,
         )[self._idx]
-        raw_predict_candle = np.exp(ohlc) * raw_obs_candle[3]
+        raw_predict_candle = np.exp(hlc) * raw_obs_candle[3]
 
-        _open = (ohlc[0] - lr_current_candle[0]) * 1
-        _high = (ohlc[1] - lr_current_candle[1]) * 3
-        _low = (ohlc[2] - lr_current_candle[2]) * 3
-        _close = (ohlc[3] - lr_current_candle[3]) * 2
-        _ohlc = np.array([_open, _high, _low, _close])
+        # _open = (ohlc[0] - lr_current_candle[0]) * 1
+        # _high = (ohlc[1] - lr_current_candle[1]) * 3
+        # _low = (ohlc[2] - lr_current_candle[2]) * 3
+        # _close = (ohlc[3] - lr_current_candle[3]) * 2
+        # _ohlc = np.array([_open, _high, _low, _close])
 
         # pos = self.positions[0]
 
         if (
-            (ohlc[0] > ohlc[1] or ohlc[0] < ohlc[2])
-            or (ohlc[3] > ohlc[1] or ohlc[3] < ohlc[2])
-            or ohlc[1] < ohlc[2]
+            0 > hlc[0]
+            or 0 < hlc[1]
+            or hlc[2] > hlc[0]
+            or hlc[2] < hlc[1]
+            or hlc[0] < hlc[1]
         ):
             pos = 0
             # print("Invalid prediction")
         else:
             long_expected_roe = (
-                abs(raw_predict_candle[1] - raw_obs_candle[3])
-                / raw_obs_candle[3]
-                * self.leverage
-            )
-            short_expected_roe = (
-                abs(raw_predict_candle[2] - raw_obs_candle[3])
-                / raw_obs_candle[3]
-                * self.leverage
-            )     
-            expected_roe = (
                 abs(raw_predict_candle[0] - raw_obs_candle[3])
                 / raw_obs_candle[3]
                 * self.leverage
             )
+            short_expected_roe = (
+                abs(raw_predict_candle[1] - raw_obs_candle[3])
+                / raw_obs_candle[3]
+                * self.leverage
+            )
+            expected_roe = (
+                abs(raw_obs_candle[3] - raw_obs_candle[3])
+                / raw_obs_candle[3]
+                * self.leverage
+            )
 
-            print(max(raw_predict_candle / raw_obs_candle - 1) * 100)
+            # a = max(raw_predict_candle / lr_current_candle[3:] - 1) * 100
+            # if a > 2:
+            #     print(a)
 
             # print(long_expected_roe, short_expected_roe, expected_roe)
 
@@ -320,46 +410,46 @@ class DiscretedTradingEnv(gym.Env):
                     pos = 0
                 else:
                     if (
-                        raw_predict_candle[0] < raw_obs_candle[3]
-                        and long_expected_roe > short_expected_roe
+                        long_expected_roe > short_expected_roe
                         # and long_expected_roe > self.take_profit
                         # and expected_roe > self.take_profit
                         # and short_expected_roe < self.stop_loss
+                        and raw_obs_candle[3] < raw_predict_candle[2]
                     ):
-                        pos = 1  # long
+                        pos = 1 * self.leverage  # long
                     elif (
-                        raw_predict_candle[0] > raw_obs_candle[3]
-                        and long_expected_roe < short_expected_roe
+                        long_expected_roe < short_expected_roe
                         # and short_expected_roe > self.take_profit
                         # and expected_roe > self.take_profit
                         # and long_expected_roe < self.stop_loss
+                        and raw_obs_candle[3] > raw_predict_candle[2]
                     ):
-                        pos = -1  # short
+                        pos = -1 * self.leverage  # short
                     else:
                         pos = self._position  # hold
             else:
                 if (
-                    raw_predict_candle[0] < raw_obs_candle[3]
-                    and long_expected_roe > short_expected_roe
+                    long_expected_roe > short_expected_roe
                     # and long_expected_roe > self.take_profit
                     # and expected_roe > self.take_profit
                     # and short_expected_roe < self.stop_loss
+                    and raw_obs_candle[3] < raw_predict_candle[2]
                 ):
                     pos = 1  # long
                 elif (
-                    raw_predict_candle[0] > raw_obs_candle[3]
-                    and long_expected_roe < short_expected_roe
+                    long_expected_roe < short_expected_roe
                     # and short_expected_roe > self.take_profit
                     # and expected_roe > self.take_profit
                     # and long_expected_roe < self.stop_loss
+                    and raw_obs_candle[3] > raw_predict_candle[2]
                 ):
                     pos = -1  # short
                 else:
                     pos = 0
 
-        is_position_changed = pos != self._position
+                pos *= self.leverage
 
-        pos *= self.leverage
+        temp_position = self._position
         self._take_action(pos)
 
         self._idx += 1
@@ -372,6 +462,7 @@ class DiscretedTradingEnv(gym.Env):
         portfolio_value = self._portfolio.valorisation(price)
 
         done, truncated = False, False
+        is_position_changed = pos != temp_position
 
         if portfolio_value <= 0:
             done = True
@@ -402,7 +493,8 @@ class DiscretedTradingEnv(gym.Env):
             real_position=self._portfolio.real_position(price),
             data=dict(zip(self._info_columns, self._info_array[self._idx])),
             portfolio_valuation=portfolio_value,
-            reward=-(abs(_ohlc)).sum(),
+            reward=portfolio_value - entry_valuation,
+            # -(abs(hlc - lr_current_candle[:3]) * 10).sum(),
             entry_price=entry_price,
             entry_valuation=entry_valuation,
             PNL=portfolio_value - entry_valuation,
@@ -417,7 +509,7 @@ class DiscretedTradingEnv(gym.Env):
         return (
             self._get_obs(),
             self.historical_info["reward", -1],
-            done,
+            False,
             truncated,
             self.historical_info[-1],
         )
@@ -511,7 +603,7 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
         self.name = Path(dataset_path).name
         df = self.preprocess(pd.read_pickle(dataset_path))
 
-        print(dataset_path)
+        # print(dataset_path)
 
         if self.btc_index:
             BTCUSDT_PATH = "/".join(
