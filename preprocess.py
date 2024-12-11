@@ -91,8 +91,15 @@ def stochastic_slow_d(slow_k, n=3):
 def preprocess(df):
     dataframe = pd.DataFrame(
         dict(
-            feature_log_returns=np.log(df.close).diff().dropna(),
-            feature_volume_lr=np.log(df.volume + 1e-8).diff().dropna(),
+            feature_log_returns=np.log(df.close).diff(),
+            feature_volume_lr=np.log(df.volume + 1e-8).diff(),
+            # feature_open_lr=np.log(df.open).diff(),
+            # feature_high_lr=np.log(df.high).diff(),
+            # feature_low_lr=np.log(df.low).diff(),
+            feature_open_lr=np.log(df.open) - np.log(df.close.shift(1)),
+            feature_high_lr=np.log(df.high) - np.log(df.close.shift(1)),
+            feature_low_lr=np.log(df.low) - np.log(df.close.shift(1)),
+
             open=df.open,
             high=df.high,
             low=df.low,
@@ -106,7 +113,7 @@ def preprocess(df):
     ).std() * np.sqrt(30)
 
     # df["feature_SMA_7"] = SMA(df, 7)
-    # df["feature_SMA_25"] = SMA(df, 25)
+    # dataframe["feature_SMA_25"] = SMA(df, 25)
     # df["feature_SMA_99"] = SMA(df, 99)
     # df["feature_MiddleBand"], df["feature_LowerBand"] = BBANDS(df, 21)
     # df["feature_MACD"], df["feature_MACD_S"], df["feature_MACD_H"] = MACD(df)
@@ -123,7 +130,7 @@ def preprocess(df):
     # dataframe["feature_VWAP"] = VWAP(dataframe)
     # dataframe["feature_OBV"] = OBV(dataframe)
 
-    dataframe = ichimoku(dataframe)
+    # dataframe = ichimoku(dataframe)
 
     return dataframe.fillna(0)
 

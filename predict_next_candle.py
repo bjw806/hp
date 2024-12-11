@@ -13,6 +13,14 @@ from gymnasium import spaces
 warnings.filterwarnings("error")
 
 
+def dynamic_feature_last_position_taken(history: History):
+    return history["position", -1]
+
+
+def dynamic_feature_real_position(history: History):
+    return history["real_position", -1]
+
+
 class DiscretedTradingEnv(gym.Env):
     metadata = {"render_modes": ["logs"]}
 
@@ -20,6 +28,10 @@ class DiscretedTradingEnv(gym.Env):
         self,
         df: pd.DataFrame,
         window_size: int = None,
+        dynamic_feature_functions: list = [
+            # dynamic_feature_last_position_taken,
+            # dynamic_feature_real_position,
+        ],
         max_episode_duration: str = "max",
         verbose: int = 1,
         name: str = "Stock",
@@ -33,9 +45,10 @@ class DiscretedTradingEnv(gym.Env):
 
         # env
         self.max_episode_duration = max_episode_duration
+        self.dynamic_feature_functions = dynamic_feature_functions
         self.window_size = window_size
         self._set_df(df)
-        self.action_space = spaces.Box(low=-np.inf, high=np.inf, shape=[4])
+        self.action_space = spaces.Box(low=-np.inf, high=np.inf, shape=[3])
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
@@ -54,12 +67,22 @@ class DiscretedTradingEnv(gym.Env):
         self._nb_features = len(self._features_columns)
         self._nb_static_features = self._nb_features
 
+        for i in range(len(self.dynamic_feature_functions)):
+            df[f"dynamic_feature__{i}"] = 0
+            self._features_columns.append(f"dynamic_feature__{i}")
+            self._nb_features += 1
+
         self.df = df
         self._obs_array = np.array(self.df[self._features_columns], dtype=np.float32)
         self._info_array = np.array(self.df[self._info_columns])
         self._price_array = np.array(self.df["close"])
 
     def _get_obs(self):
+        for i, dynamic_feature_function in enumerate(self.dynamic_feature_functions):
+            self._obs_array[self._idx, self._nb_static_features + i] = (
+                dynamic_feature_function(self.historical_info)
+            )
+
         _step_index = (
             self._idx
             if self.window_size is None
@@ -97,55 +120,51 @@ class DiscretedTradingEnv(gym.Env):
     def render(self):
         pass
 
-    def step(self, ohlc=None):
-        # input_candle = np.array(
-        #     self.df[
-        #         [
-        #             "open",
-        #             "high",
-        #             "low",
-        #             "close",
-        #         ]
-        #     ],
-        #     dtype=np.float32,
-        # )[self._idx]   
-
-        self._idx += 1
-        self._step += 1
-
-        done, truncated = False, False
-
-        # predict_candle = np.exp(ohlc) * input_candle
-        # real_candle = np.array(
-        #     self.df[
-        #         [
-        #             "open",
-        #             "high",
-        #             "low",
-        #             "close",
-        #         ]
-        #     ],
-        #     dtype=np.float32,
-        # )[self._idx]
-        feature_candle = np.array(
+    def step(self, hlc=[None]):
+        lr_current_candle = np.array(
             self.df[
                 [
-                    "feature_open_lr",
+                    # "feature_open_lr",
                     "feature_high_lr",
                     "feature_low_lr",
                     "feature_log_returns",
                 ]
             ],
             dtype=np.float32,
-        )[self._idx]
+        )[self._idx + 1]
 
-        # MSE = (real_candle - predict_candle)
-        # MAPE = (np.abs((real_candle - predict_candle) / real_candle)) * 100
-        
+        # MSE = (raw_current_candle - raw_predict_candle)
+        # MAPE = (np.abs((raw_current_candle - raw_predict_candle) / raw_current_candle)) * 100
+
         # if MAPE.mean() > 1:
         #     print(MAPE, MAPE.mean())
         # print(MAPE, MAPE.mean())
         # print(real_candle, predict_candle)
+
+        penalty = 0
+
+        # open
+        if 0 > hlc[0]:
+            penalty -= 1
+
+        if 0 < hlc[1]:
+            penalty -= 1
+
+        # close
+        if hlc[2] > hlc[0]:
+            penalty -= 1
+
+        if hlc[2] < hlc[1]:
+            penalty -= 1
+
+        # high / low
+        if hlc[0] < hlc[1]:
+            penalty -= 1
+
+        self._idx += 1
+        self._step += 1
+
+        done, truncated = False, False
 
         if (self._idx >= len(self.df) - 1) or (
             isinstance(self.max_episode_duration, int)
@@ -153,18 +172,18 @@ class DiscretedTradingEnv(gym.Env):
         ):
             truncated = True
 
-        _open = (ohlc[0] - feature_candle[0]) * 1
-        _high = (ohlc[1] - feature_candle[1]) * 3
-        _low = (ohlc[2] - feature_candle[2]) * 3
-        _close = (ohlc[3] - feature_candle[3]) * 2
-        _ohlc = np.array([_open, _high, _low, _close])
+        # _high = (ohlc[1] - lr_current_candle[1])
+        # _low = (ohlc[2] - lr_current_candle[2])
+        # _close = (ohlc[3] - lr_current_candle[3])
+        # _ohlc = np.array([_open, _high, _low, _close])
+        # _w = abs(lr_current_candle[1] - lr_current_candle[2])
 
         self.historical_info.add(
             idx=self._idx,
             step=self._step,
             date=self.df.index.values[self._idx],
             data=dict(zip(self._info_columns, self._info_array[self._idx])),
-            reward=-(abs(_ohlc)).sum(),
+            reward=-(abs(hlc - lr_current_candle).sum()),
             # -((abs(np.array(ohlc) - data) + 1) ** 2).sum() - 4
         )
 
@@ -245,8 +264,8 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
 
         if self.btc_index:
             for k, v in enumerate(self.dataset_pathes):
-                if "binance-BTCUSDT-15m.pkl" in v:
-                    self.dataset_pathes.pop(k - 1)
+                if "binanceusdm-BTCDOMUSDT-15m.pkl" in v:
+                    self.dataset_pathes.pop(k)
 
         self.dataset_nb_uses = np.zeros(shape=(len(self.dataset_pathes),))
         super().__init__(self.next_dataset(), *args, **kwargs)
@@ -267,7 +286,7 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
 
         if self.btc_index:
             BTCUSDT_PATH = "/".join(
-                dataset_path.split("/")[:-1] + ["binance-BTCUSDT-15m.pkl"]
+                dataset_path.split("/")[:-1] + ["binanceusdm-BTCDOMUSDT-15m.pkl"]
             )
             BTCUSDT = pd.read_pickle(BTCUSDT_PATH)
             BTCUSDT = pd.DataFrame(

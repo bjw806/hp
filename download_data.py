@@ -7,24 +7,33 @@ import calendar
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-for y in range(2023, 2024 + 1):
+for y in range(2021, 2024 + 1):
     for m in range(1, 12 + 1):
-        path = f"data/train/month_15m/{y}/{m}"
+        path = f"data/futures/15m/{y}/{m}"
         Path(path).mkdir(parents=True, exist_ok=True)
         download(
-            exchange_names=["binance"],
+            exchange_names=["binanceusdm"],
             symbols=[
+                "BTCDOM/USDT",
+                "BTC/USDT",
+                "ETH/USDT",
+                "BNB/USDT",
                 "DOGE/USDT",
                 "XRP/USDT",
-                "BTC/USDT",
                 "XLM/USDT",
-                "BNB/USDT",
-                "ETH/USDT",
                 "SOL/USDT",
                 "ADA/USDT",
                 "SAND/USDT",
-                "1000PEPE/USDT",
                 "DOT/USDT",
+                "ALGO/USDT",
+                "TRX/USDT",
+                "EOS/USDT",
+                "FTM/USDT",
+                "LTC/USDT",
+                "LINK/USDT",
+                "BCH/USDT",
+                "AVAX/USDT",
+                "ATOM/USDT",
             ],
             timeframe="15m",
             dir=path,
