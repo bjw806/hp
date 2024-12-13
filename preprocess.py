@@ -2,6 +2,7 @@
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import robust_scale
+from sklearn.preprocessing import StandardScaler
 
 
 def SMA(df, ndays):
@@ -89,17 +90,15 @@ def stochastic_slow_d(slow_k, n=3):
 
 
 def preprocess(df):
+    prev_close = df.close.shift(1)
+
     dataframe = pd.DataFrame(
         dict(
             feature_log_returns=np.log(df.close).diff(),
-            feature_volume_lr=np.log(df.volume + 1e-8).diff(),
-            # feature_open_lr=np.log(df.open).diff(),
-            # feature_high_lr=np.log(df.high).diff(),
-            # feature_low_lr=np.log(df.low).diff(),
-            feature_open_lr=np.log(df.open) - np.log(df.close.shift(1)),
-            feature_high_lr=np.log(df.high) - np.log(df.close.shift(1)),
-            feature_low_lr=np.log(df.low) - np.log(df.close.shift(1)),
-
+            feature_volume_lr=np.log1p(df.volume).diff(),
+            feature_open_lr=np.log(df.open / prev_close),
+            feature_high_lr=np.log(df.high / prev_close),
+            feature_low_lr=np.log(df.low / prev_close),
             open=df.open,
             high=df.high,
             low=df.low,
@@ -107,10 +106,30 @@ def preprocess(df):
             volume=df.volume,
         )
     )
+    ohlc_cols = [
+        "feature_log_returns",
+        "feature_open_lr",
+        "feature_high_lr",
+        "feature_low_lr",
+        "feature_volume_lr",
+        "feature_volatility",
+    ]
+    # volume_cols = ["feature_volume_lr"]
+
+    # scaler = StandardScaler()
+    # dataframe[ohlc_cols] = scaler.fit_transform(dataframe[ohlc_cols])
+
+    # volume_scaler = StandardScaler()
+    # dataframe[volume_cols] = volume_scaler.fit_transform(dataframe[volume_cols])
 
     dataframe["feature_volatility"] = dataframe["feature_log_returns"].rolling(
-        window=30
-    ).std() * np.sqrt(30)
+        window=10
+    ).std() * np.sqrt(10)
+
+    # for col in ohlc_cols:
+    #     dataframe[col] = (dataframe[col] - dataframe[col].min()) / (
+    #         dataframe[col].max() - dataframe[col].min()
+    #     )
 
     # df["feature_SMA_7"] = SMA(df, 7)
     # dataframe["feature_SMA_25"] = SMA(df, 25)
@@ -132,7 +151,7 @@ def preprocess(df):
 
     # dataframe = ichimoku(dataframe)
 
-    return dataframe.fillna(0)
+    return dataframe#.fillna(-1)
 
 
 def only_sub_indicators(df):
@@ -198,12 +217,16 @@ def OBV(df):
 
 
 def ichimoku(df):
-    df['feature_tenkan'] = (df.high.rolling(window=9).max() + df.low.rolling(window=9).min()) / 2
-    df['feature_kijun'] = (df.high.rolling(window=26).max() + df.low.rolling(window=26).min()) / 2
-    df['feature_senkou_1'] = ((df.feature_tenkan + df.feature_kijun) / 2).shift(26)
-    df['feature_senkou_2'] = (
+    df["feature_tenkan"] = (
+        df.high.rolling(window=9).max() + df.low.rolling(window=9).min()
+    ) / 2
+    df["feature_kijun"] = (
+        df.high.rolling(window=26).max() + df.low.rolling(window=26).min()
+    ) / 2
+    df["feature_senkou_1"] = ((df.feature_tenkan + df.feature_kijun) / 2).shift(26)
+    df["feature_senkou_2"] = (
         (df.high.rolling(window=52).max() + df.low.rolling(window=52).min()) / 2
     ).shift(26)
 
-    df['feature_chikou'] = df.close.shift(-26)
+    df["feature_chikou"] = df.close.shift(-26)
     return df

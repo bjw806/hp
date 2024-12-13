@@ -11,6 +11,7 @@ import pandas as pd
 from gym_trading_env.utils.history import History
 from gym_trading_env.utils.portfolio import TargetPortfolio
 from gymnasium import spaces
+from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings("error")
 
@@ -150,7 +151,17 @@ class DiscretedTradingEnv(gym.Env):
             else np.arange(self._idx + 1 - self.window_size, self._idx + 1)
         )
 
+
         observation = self._obs_array[_step_index]
+
+        for i in range(observation.shape[1]):
+            col = observation[:, i]
+            min_val = np.min(col)
+            max_val = np.max(col)
+
+            observation[:, i] = (
+                (col - min_val) / (max_val - min_val) if max_val - min_val != 0 else 0
+            )
         return observation
 
     def reset(self, seed=None, options=None):
@@ -315,13 +326,13 @@ class DiscretedTradingEnv(gym.Env):
         종료 조건 확인 →
         결과 기록 및 반환
         """
-        lr_current_candle = np.array(
+        validation_candle = np.array(
             self.df[
                 [
                     # "feature_open_lr",
-                    "feature_high_lr",
-                    "feature_low_lr",
-                    "feature_log_returns",
+                    # "feature_high_lr",
+                    # "feature_low_lr",
+                    # "feature_log_returns",
                     "high",
                     "low",
                     "close",
@@ -330,18 +341,55 @@ class DiscretedTradingEnv(gym.Env):
             dtype=np.float32,
         )[self._idx + 1]
 
-        raw_obs_candle = np.array(
+        raw_obs_close = np.array(
             self.df[
                 [
-                    "open",
-                    "high",
-                    "low",
                     "close",
                 ]
             ],
             dtype=np.float32,
-        )[self._idx]
-        raw_predict_candle = np.exp(hlc) * raw_obs_candle[3]
+        )[self._idx][0]
+        raw_predict_candle = raw_obs_close * (hlc + 100) / 100
+
+        penalty = 0
+
+        # open
+        if 0 > hlc[0]:
+            penalty += 1
+
+        if 0 < hlc[1]:
+            penalty += 1
+
+        # close
+        if hlc[2] > hlc[0]:
+            penalty += 1
+
+        if hlc[2] < hlc[1]:
+            penalty += 1
+
+        # high / low
+        if hlc[0] < hlc[1]:
+            penalty += 1
+
+        MSE = (validation_candle - raw_predict_candle) / validation_candle * 100
+        # MSE = lr_current_candle[:3] - hlc  # n% points
+        # MSEP = (abs(MSE / lr_current_candle[:3]) + 1) ** 2
+        # print(abs(MSE / lr_current_candle[:3]) + 1)
+        # print(MSEP)
+        # print((MSEP - 1).sum(), penalty**2)
+
+        # print(lr_current_candle[:3])
+        # print(MSE, hlc)
+        if (hlc > 1).any():
+            print("p", hlc)
+
+        if (validation_candle / raw_obs_close > 1.01).any():
+            print("v", validation_candle)
+
+        if (hlc > 1).any() and (validation_candle / raw_obs_close > 1.01).any():
+            print(123)
+        # print(raw_predict_candle, validation_candle)
+        # print(lr_current_candle[3:])
 
         # _open = (ohlc[0] - lr_current_candle[0]) * 1
         # _high = (ohlc[1] - lr_current_candle[1]) * 3
@@ -362,46 +410,34 @@ class DiscretedTradingEnv(gym.Env):
             # print("Invalid prediction")
         else:
             long_expected_roe = (
-                abs(raw_predict_candle[0] - raw_obs_candle[3])
-                / raw_obs_candle[3]
+                abs(raw_predict_candle[0] - raw_obs_close)
+                / raw_obs_close
                 * self.leverage
             )
             short_expected_roe = (
-                abs(raw_predict_candle[1] - raw_obs_candle[3])
-                / raw_obs_candle[3]
+                abs(raw_predict_candle[1] - raw_obs_close)
+                / raw_obs_close
                 * self.leverage
             )
             expected_roe = (
-                abs(raw_obs_candle[3] - raw_obs_candle[3])
-                / raw_obs_candle[3]
+                abs(raw_predict_candle[2] - raw_obs_close)
+                / raw_obs_close
+                * self.leverage
+            )
+            half_long_roe = (
+                abs((raw_predict_candle[0] + raw_predict_candle[2]) / 2 - raw_obs_close)
+                / raw_obs_close
+                * self.leverage
+            )
+            half_short_roe = (
+                abs((raw_predict_candle[1] + raw_predict_candle[2]) / 2 - raw_obs_close)
+                / raw_obs_close
                 * self.leverage
             )
 
-            # a = max(raw_predict_candle / lr_current_candle[3:] - 1) * 100
-            # if a > 2:
-            #     print(a)
-
-            # print(long_expected_roe, short_expected_roe, expected_roe)
-
-            # if self._position != 0:
-            #     if self.historical_info["ROE", -1] > self.take_profit:  # TF
-            #         pos = 0
-            #     elif self.historical_info["ROE", -1] < self.stop_loss:  # SL
-            #         pos = 0
-            #     else:
-            #         pos = -1 if short_expected_roe > long_expected_roe else 1
-            #         pos *= (
-            #             self.leverage
-            #             if max(long_expected_roe, short_expected_roe) > self.take_profit
-            #             else self._position
-            #         )
-            # else:
-            #     pos = -1 if short_expected_roe > long_expected_roe else 1
-            #     pos *= (
-            #         self.leverage
-            #         if max(long_expected_roe, short_expected_roe) > self.take_profit
-            #         else 0
-            #     )
+            # flexible take profit and stop loss
+            # by using l/s expected roe
+            # print(expected_roe, half_long_roe, half_short_roe)
 
             if self._position != 0:
                 if self.historical_info["ROE", -1] > self.take_profit:  # TF
@@ -414,7 +450,8 @@ class DiscretedTradingEnv(gym.Env):
                         # and long_expected_roe > self.take_profit
                         # and expected_roe > self.take_profit
                         # and short_expected_roe < self.stop_loss
-                        and raw_obs_candle[3] < raw_predict_candle[2]
+                        and raw_obs_close < raw_predict_candle[2]
+                        # and half_long_roe > self.take_profit
                     ):
                         pos = 1 * self.leverage  # long
                     elif (
@@ -422,7 +459,8 @@ class DiscretedTradingEnv(gym.Env):
                         # and short_expected_roe > self.take_profit
                         # and expected_roe > self.take_profit
                         # and long_expected_roe < self.stop_loss
-                        and raw_obs_candle[3] > raw_predict_candle[2]
+                        and raw_obs_close > raw_predict_candle[2]
+                        # and half_short_roe > self.take_profit
                     ):
                         pos = -1 * self.leverage  # short
                     else:
@@ -433,7 +471,8 @@ class DiscretedTradingEnv(gym.Env):
                     # and long_expected_roe > self.take_profit
                     # and expected_roe > self.take_profit
                     # and short_expected_roe < self.stop_loss
-                    and raw_obs_candle[3] < raw_predict_candle[2]
+                    # and raw_obs_close < raw_predict_candle[2]
+                    # and half_long_roe > self.take_profit
                 ):
                     pos = 1  # long
                 elif (
@@ -441,7 +480,8 @@ class DiscretedTradingEnv(gym.Env):
                     # and short_expected_roe > self.take_profit
                     # and expected_roe > self.take_profit
                     # and long_expected_roe < self.stop_loss
-                    and raw_obs_candle[3] > raw_predict_candle[2]
+                    # and raw_obs_close > raw_predict_candle[2]
+                    # and half_short_roe > self.take_profit
                 ):
                     pos = -1  # short
                 else:
@@ -606,17 +646,32 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
         # print(dataset_path)
 
         if self.btc_index:
-            BTCUSDT_PATH = "/".join(
-                dataset_path.split("/")[:-1] + ["binanceusdm-BTCDOMUSDT-15m.pkl"]
-            )
+            self.btc_scaler = StandardScaler()
+            self.btcdom_scaler = StandardScaler()
+            p = dataset_path.split("/")[:-1]
+
+            BTCUSDT_PATH = "/".join(p + ["binanceusdm-BTCUSDT-15m.pkl"])
             BTCUSDT = pd.read_pickle(BTCUSDT_PATH)
             BTCUSDT = pd.DataFrame(
-                {"feature_btc_log_returns": np.log(BTCUSDT.close).diff().dropna()}
+                {"feature_btc_log_returns": np.log(BTCUSDT.close).diff()}
             )
 
-            df = pd.concat([BTCUSDT, df], axis=1).fillna(0)
+            BTCDOMUSDT_PATH = "/".join(p + ["binanceusdm-BTCDOMUSDT-15m.pkl"])
+            BTCDOMUSDT = pd.read_pickle(BTCDOMUSDT_PATH)
+            BTCDOMUSDT = pd.DataFrame(
+                {"feature_btcdom_log_returns": np.log(BTCDOMUSDT.close).diff()}
+            )
 
-        return df
+            df = pd.concat([BTCUSDT, BTCDOMUSDT, df], axis=1)
+            # a = ["feature_btc_log_returns"]
+            # b = ["feature_btcdom_log_returns"]
+            # df[a] = self.btc_scaler.fit_transform(df[a])
+            # df[b] = self.btcdom_scaler.fit_transform(df[b])
+            # cols = ["feature_btc_log_returns", "feature_btcdom_log_returns"]
+            # for col in cols:
+            #     df[col] = (df[col] - df[col].min()) / (df[col].max() - df[col].min())
+        
+        return df.fillna(0)
 
     def reset(self, seed=None, options=None):
         self._episodes_on_this_dataset += 1

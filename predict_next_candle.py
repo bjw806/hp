@@ -9,6 +9,9 @@ import numpy as np
 import pandas as pd
 from gym_trading_env.utils.history import History
 from gymnasium import spaces
+import torch
+from sklearn.preprocessing import StandardScaler
+from pickle import dump
 
 warnings.filterwarnings("error")
 
@@ -90,6 +93,16 @@ class DiscretedTradingEnv(gym.Env):
         )
 
         observation = self._obs_array[_step_index]
+
+        for i in range(observation.shape[1]):
+            col = observation[:, i]
+            min_val = np.min(col)
+            max_val = np.max(col)
+
+            observation[:, i] = (
+                (col - min_val) / (max_val - min_val) if max_val - min_val != 0 else 0
+            )
+
         return observation
 
     def reset(self, seed=None, options=None):
@@ -98,6 +111,7 @@ class DiscretedTradingEnv(gym.Env):
         self.pc_counter = 0
         self._step = 0
         self._idx = 0
+        self.wrong = 0
 
         if self.window_size is not None:
             self._idx = self.window_size - 1
@@ -113,6 +127,7 @@ class DiscretedTradingEnv(gym.Env):
             date=self.df.index.values[self._idx],
             data=dict(zip(self._info_columns, self._info_array[self._idx])),
             reward=0,
+            hlc=np.array([0, 0, 0]),
         )
 
         return self._get_obs(), self.historical_info[0]
@@ -121,13 +136,13 @@ class DiscretedTradingEnv(gym.Env):
         pass
 
     def step(self, hlc=[None]):
-        lr_current_candle = np.array(
+        validation_candle = np.array(
             self.df[
                 [
                     # "feature_open_lr",
-                    "feature_high_lr",
-                    "feature_low_lr",
-                    "feature_log_returns",
+                    # "feature_high_lr",  # h
+                    # "feature_low_lr",  # l
+                    # "feature_log_returns",  # c
                     "high",
                     "low",
                     "close",
@@ -136,20 +151,30 @@ class DiscretedTradingEnv(gym.Env):
             dtype=np.float32,
         )[self._idx + 1]
 
-        raw_predict_candle = np.array(
-            self.df[
-                [
-                    "close",
-                ]
-            ],
-            dtype=np.float32,
-        )[self._idx][0] * np.exp(hlc)
+        raw_predict_candle = (
+            np.array(
+                self.df[
+                    [
+                        "close",
+                    ]
+                ],
+                dtype=np.float32,
+            )[self._idx][0]
+            * (hlc + 100)
+            / 100
+        )
 
-        MAPE = abs(raw_predict_candle / lr_current_candle[3:] - 1) * 100
+        # MAPE = abs(raw_predict_candle / lr_current_candle[3:] - 1) * 100
 
-        # MSE = (raw_current_candle - raw_predict_candle)
-        # MAPE = (np.abs((raw_current_candle - raw_predict_candle) / raw_current_candle)) * 100
+        # MSE = lr_current_candle[:3] - hlc  # n% points
+        # MSEP = (abs(MSE / lr_current_candle[:3]) + 1) ** 2
+        # MAPE = (np.abs((validation_candle[:3] - hlc) / validation_candle[:3]))
+        MSE = (validation_candle - raw_predict_candle) / validation_candle * 100 * 10
+        # _MSE = MSE.copy()
+        # torch.where(_MSE > 1, 1, 0)
+        # self.wrong += _MSE.sum()
 
+        # torch.where(MSE > 1, )
         # if MAPE.mean() > 1:
         #     print(MAPE, MAPE.mean())
         # print(MAPE, MAPE.mean())
@@ -159,21 +184,28 @@ class DiscretedTradingEnv(gym.Env):
 
         # open
         if 0 > hlc[0]:
-            penalty -= 1
+            penalty += 1
 
         if 0 < hlc[1]:
-            penalty -= 1
+            penalty += 1
 
         # close
         if hlc[2] > hlc[0]:
-            penalty -= 1
+            penalty += 1
 
         if hlc[2] < hlc[1]:
-            penalty -= 1
+            penalty += 1
 
         # high / low
         if hlc[0] < hlc[1]:
-            penalty -= 1
+            penalty += 1
+
+        # for a, b in zip(hlc, self.historical_info["hlc", -1]):
+        #     residual = abs(np.exp(a - b)) - 1
+        #     # if a == b:
+        #     if residual < 0.01:
+        #         penalty -= 1
+        # print(residual, a, b)
 
         self._idx += 1
         self._step += 1
@@ -197,9 +229,12 @@ class DiscretedTradingEnv(gym.Env):
             step=self._step,
             date=self.df.index.values[self._idx],
             data=dict(zip(self._info_columns, self._info_array[self._idx])),
-            reward=-MAPE.sum(),
-            # -(abs(hlc - lr_current_candle).sum() * 10),
+            reward=-(MSE**2).sum(),  # - self.wrong,
+            # -(MSEP - 1).sum() - penalty**2,
+            #
+            # -(abs(hlc - lr_current_candle[:3]).sum() * 2),
             # -((abs(np.array(ohlc) - data) + 1) ** 2).sum() - 4
+            hlc=hlc,
         )
 
         if truncated:
@@ -279,7 +314,7 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
 
         if self.btc_index:
             for k, v in enumerate(self.dataset_pathes):
-                if "binanceusdm-BTCDOMUSDT-15m.pkl" in v:
+                if "BTC" in v:
                     self.dataset_pathes.pop(k)
 
         self.dataset_nb_uses = np.zeros(shape=(len(self.dataset_pathes),))
@@ -300,17 +335,32 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
         df = self.preprocess(pd.read_pickle(dataset_path))
 
         if self.btc_index:
-            BTCUSDT_PATH = "/".join(
-                dataset_path.split("/")[:-1] + ["binanceusdm-BTCDOMUSDT-15m.pkl"]
-            )
+            # self.btc_scaler = StandardScaler()
+            # self.btcdom_scaler = StandardScaler()
+            p = dataset_path.split("/")[:-1]
+
+            BTCUSDT_PATH = "/".join(p + ["binanceusdm-BTCUSDT-15m.pkl"])
             BTCUSDT = pd.read_pickle(BTCUSDT_PATH)
             BTCUSDT = pd.DataFrame(
-                {"feature_btc_log_returns": np.log(BTCUSDT.close).diff().dropna()}
+                {"feature_btc_log_returns": np.log(BTCUSDT.close).diff()}
             )
 
-            df = pd.concat([BTCUSDT, df], axis=1).fillna(0)
+            BTCDOMUSDT_PATH = "/".join(p + ["binanceusdm-BTCDOMUSDT-15m.pkl"])
+            BTCDOMUSDT = pd.read_pickle(BTCDOMUSDT_PATH)
+            BTCDOMUSDT = pd.DataFrame(
+                {"feature_btcdom_log_returns": np.log(BTCDOMUSDT.close).diff()}
+            )
 
-        return df
+            df = pd.concat([BTCUSDT, BTCDOMUSDT, df], axis=1)
+            # a = ["feature_btc_log_returns"]
+            # b = ["feature_btcdom_log_returns"]
+            # df[a] = self.btc_scaler.fit_transform(df[a])
+            # df[b] = self.btcdom_scaler.fit_transform(df[b])
+            # cols = ["feature_btc_log_returns", "feature_btcdom_log_returns"]
+            # for col in cols:
+            #     df[col] = (df[col] - df[col].min()) / (df[col].max() - df[col].min())
+
+        return df.fillna(0)
 
     def reset(self, seed=None, options=None):
         self._episodes_on_this_dataset += 1

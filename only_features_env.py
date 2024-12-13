@@ -56,7 +56,7 @@ class DiscretedTradingEnv(gym.Env):
         positions: list = [-1, 1],
         multiplier: list = [2, 5, 10],
         dynamic_feature_functions: list = [
-            dynamic_feature_last_position_taken,
+            # dynamic_feature_last_position_taken,
             # dynamic_feature_real_position,
         ],
         reward_function: Callable = basic_reward_function,
@@ -163,6 +163,16 @@ class DiscretedTradingEnv(gym.Env):
         )
 
         observation = self._obs_array[_step_index]
+
+        for i in range(observation.shape[1]):
+            col = observation[:, i]
+            min_val = np.min(col)
+            max_val = np.max(col)
+
+            observation[:, i] = (
+                (col - min_val) / (max_val - min_val) if max_val - min_val != 0 else 0
+            )
+
         return observation
 
     def reset(self, seed=None, options=None):
@@ -249,8 +259,8 @@ class DiscretedTradingEnv(gym.Env):
 
     def step(self, position_index=None):
         pos = self.positions[position_index[0]] * self.multiplier[position_index[1]]
-        is_position_changed = pos != self._position
 
+        temp_position = self._position
         self._take_action(pos)
 
         self._idx += 1
@@ -264,6 +274,7 @@ class DiscretedTradingEnv(gym.Env):
         # portfolio_distribution = self._portfolio.get_portfolio_distribution()
 
         done, truncated = False, False
+        is_position_changed = self._position != temp_position
 
         if portfolio_value <= 0:
             done = True
@@ -318,7 +329,7 @@ class DiscretedTradingEnv(gym.Env):
         return (
             self._get_obs(),
             self.historical_info["reward", -1],
-            False,
+            done,
             truncated,
             self.historical_info[-1],
         )
@@ -392,7 +403,7 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
 
         if self.btc_index:
             for k, v in enumerate(self.dataset_pathes):
-                if "binance-BTCUSDT-15m.pkl" in v:
+                if "BTC" in v:
                     self.dataset_pathes.pop(k - 1)
 
         self.dataset_nb_uses = np.zeros(shape=(len(self.dataset_pathes),))
@@ -413,17 +424,23 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
         df = self.preprocess(pd.read_pickle(dataset_path))
 
         if self.btc_index:
-            BTCUSDT_PATH = "/".join(
-                dataset_path.split("/")[:-1] + ["binance-BTCUSDT-15m.pkl"]
-            )
+            p = dataset_path.split("/")[:-1]
+
+            BTCUSDT_PATH = "/".join(p + ["binanceusdm-BTCUSDT-15m.pkl"])
             BTCUSDT = pd.read_pickle(BTCUSDT_PATH)
             BTCUSDT = pd.DataFrame(
-                {"feature_btc_log_returns": np.log(BTCUSDT.close).diff().dropna()}
+                {"feature_btc_log_returns": np.log(BTCUSDT.close).diff()}
             )
 
-            df = pd.concat([BTCUSDT, df], axis=1).fillna(0)
+            BTCDOMUSDT_PATH = "/".join(p + ["binanceusdm-BTCDOMUSDT-15m.pkl"])
+            BTCDOMUSDT = pd.read_pickle(BTCDOMUSDT_PATH)
+            BTCDOMUSDT = pd.DataFrame(
+                {"feature_btcdom_log_returns": np.log(BTCDOMUSDT.close).diff()}
+            )
 
-        return df
+            df = pd.concat([BTCUSDT, BTCDOMUSDT, df], axis=1)
+
+        return df.fillna(0)
 
     def reset(self, seed=None, options=None):
         self._episodes_on_this_dataset += 1
