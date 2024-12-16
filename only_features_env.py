@@ -299,18 +299,17 @@ class DiscretedTradingEnv(gym.Env):
         ):
             truncated = True
 
+        record = 0
         prev_valuation = self.historical_info["entry_valuation", -1]
 
         if is_position_changed:
-            if self._position == 0:  # no position
+            if self._position == 0:  # close position
                 entry_valuation = 0
                 record = 1 if portfolio_value > prev_valuation else -1
             else:  # position taken
                 entry_valuation = portfolio_value
-                record = 0
         else:  # hold position
             entry_valuation = prev_valuation
-            record = 0
 
         self.historical_info.add(
             idx=self._idx,
