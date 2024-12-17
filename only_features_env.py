@@ -24,10 +24,12 @@ def basic_reward_function(history: History):
     total_roe = (
         history["portfolio_valuation", -1] / history["portfolio_valuation", 0] - 1
     )  # * math.sqrt(math.sqrt(episode_length))
-    position = -abs(history["position"].mean()) * 0.05
+    position = -(history["position"].mean() ** 2) * 0.1
     record = -history["record"].sum() * 0.01
+    MDD = history["ROE"].min()
+
     reward = roe + total_roe + position + record
-    return total_roe
+    return -history["record", -1] #history["PNL", -1] + position
 
 
 # def basic_reward_function(history: History):
@@ -231,6 +233,7 @@ class DiscretedTradingEnv(gym.Env):
             ROE=0,
             pc_counter=0,
             record=0,
+            liquidation=0,
         )
 
         return self._get_obs(), self.historical_info[0]
@@ -287,7 +290,7 @@ class DiscretedTradingEnv(gym.Env):
         done, truncated = False, False
         is_position_changed = self._position != temp_position
 
-        if portfolio_value <= 10:  # 1% of initial value
+        if portfolio_value <= 100:  # liquidation at 5% of initial value
             done = True
             self.liquidation = True
             portfolio_value = 1
@@ -327,8 +330,11 @@ class DiscretedTradingEnv(gym.Env):
             ROE=0 if prev_valuation == 0 else ((portfolio_value / prev_valuation) - 1),
             pc_counter=self.pc_counter,
             record=record,
+            liquidation=-1 if self.liquidation else 0,
         )
-        self.historical_info["reward", -1] = self.reward_function(self.historical_info)
+        self.historical_info["reward", -1] = (
+            -1e5 if self.liquidation else self.reward_function(self.historical_info)
+        )
 
         # print(self.historical_info["pc_counter"])
 
