@@ -17,19 +17,20 @@ warnings.filterwarnings("error")
 
 def basic_reward_function(history: History):
     # episode_length = len(history)
-    roe = history["ROE", -1]
+    roe = history["ROE", -1] * 100
+    pnl = history["PNL", -1]
     # (
     #     history["portfolio_valuation", -1] / (history["entry_valuation", -1]) - 1
     # )  # * math.sqrt(math.sqrt(3000 - episode_length))
-    total_roe = (
-        history["portfolio_valuation", -1] / history["portfolio_valuation", 0] - 1
-    )  # * math.sqrt(math.sqrt(episode_length))
-    position = -(history["position"].mean() ** 2) * 0.1
-    record = -history["record"].sum() * 0.01
-    MDD = history["ROE"].min()
+    # total_roe = (
+    #     history["portfolio_valuation", -1] / history["portfolio_valuation", 0] - 1
+    # )  # * math.sqrt(math.sqrt(episode_length))
+    # position = -(history["position"].mean() ** 2) * 0.1
+    # record = -history["record"].sum() * 0.01
+    # MDD = history["ROE"].min()
 
-    reward = roe + total_roe + position + record
-    return -history["record", -1] #history["PNL", -1] + position
+    reward = roe #+ total_roe + position + record
+    return roe + pnl
 
 
 # def basic_reward_function(history: History):
