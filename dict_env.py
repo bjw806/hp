@@ -32,16 +32,19 @@ def basic_reward_function(history: History):
 
     reward = (
         roe
-        # pnl
+        + pnl
         # + total_roe
         # + position
-        + record
+        # + record
     )
 
-    if history["position", -2] < 0 and pnl > 0:
-        reward *= 2
+    if pnl != 0:
+        reward += record
 
-    return ((reward**2) if reward > 0 else -(reward**2)) * 0.1
+    # if history["position", -2] < 0 and pnl > 0:
+    #     reward *= 2
+
+    return reward #((reward**2) if reward > 0 else -(reward**2)) * 0.1
 
 
 def dynamic_feature_last_position_taken(history: History):
@@ -321,8 +324,16 @@ class DiscretedTradingEnv(gym.Env):
                 realized_pnl = portfolio_value - prev_valuation
                 realized_roe = (realized_pnl / prev_valuation) - 1
                 record = 1 if portfolio_value > prev_valuation else -1
+            
+            elif prev_valuation != 0: # switch position
+                entry_valuation = portfolio_value
+                realized_pnl = portfolio_value - prev_valuation
+                realized_roe = (realized_pnl / prev_valuation) - 1
+                record = 1 if portfolio_value > prev_valuation else -1
+
             else:  # open position
                 entry_valuation = portfolio_value
+            
         else:  # hold position
             entry_valuation = prev_valuation
 
