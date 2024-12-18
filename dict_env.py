@@ -17,7 +17,7 @@ warnings.filterwarnings("error")
 
 def basic_reward_function(history: History):
     # episode_length = len(history)
-    # roe = history["realized_roe", -1] * 100
+    roe = history["realized_roe", -1] * 100 # %
     pnl = history["realized_pnl", -1]
     # (
     #     history["portfolio_valuation", -1] / (history["entry_valuation", -1]) - 1
@@ -26,16 +26,22 @@ def basic_reward_function(history: History):
     #     history["portfolio_valuation", -1] / history["portfolio_valuation", 0] - 1
     # ) * 100  # * math.sqrt(math.sqrt(episode_length))
     # position = -(history["position"].mean() ** 2) * 0.1
-    # record = -history["record"].sum() * 0.01
+    record = -(history["record"].sum() * 0.1)
     # MDD = history["ROE"].min()
     # unrealized_pnl = history["unrealized_pnl", -1] * 0.1
 
-    reward = pnl  # + total_roe + position + record
+    reward = (
+        roe
+        # pnl
+        # + total_roe
+        # + position
+        + record
+    )
 
     if history["position", -2] < 0 and pnl > 0:
         reward *= 2
 
-    return ((reward ** 2) if reward > 0 else -(reward ** 2)) * 0.1
+    return ((reward**2) if reward > 0 else -(reward**2)) * 0.1
 
 
 def dynamic_feature_last_position_taken(history: History):
@@ -346,9 +352,7 @@ class DiscretedTradingEnv(gym.Env):
         )
         self.historical_info["reward", -1] = (
             # -((portfolio_value - prev_valuation) ** 2)
-            -1e+4
-            if self.liquidation
-            else self.reward_function(self.historical_info)
+            -1e4 if self.liquidation else self.reward_function(self.historical_info)
         )
 
         # print(self.historical_info["pc_counter"])
