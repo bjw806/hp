@@ -1,5 +1,7 @@
 import datetime
 import glob
+import math
+from mimetypes import init
 import os
 import warnings
 from pathlib import Path
@@ -11,40 +13,50 @@ import pandas as pd
 from gym_trading_env.utils.history import History
 from gym_trading_env.utils.portfolio import TargetPortfolio
 from gymnasium import spaces
+from sympy import li
 
 warnings.filterwarnings("error")
 
 
 def basic_reward_function(history: History):
     # episode_length = len(history)
-    roe = history["realized_roe", -1] * 100 # %
+    initial_valuation = history["entry_valuation", 0]
+    # roe = history["realized_roe", -1]  # * 100 # %
     pnl = history["realized_pnl", -1]
     # (
     #     history["portfolio_valuation", -1] / (history["entry_valuation", -1]) - 1
     # )  # * math.sqrt(math.sqrt(3000 - episode_length))
-    # total_roe = (
-    #     history["portfolio_valuation", -1] / history["portfolio_valuation", 0] - 1
-    # ) * 100  # * math.sqrt(math.sqrt(episode_length))
-    # position = -(history["position"].mean() ** 2) * 0.1
-    record = -(history["record"].sum() * 0.1)
+
+    # position = abs(history["position"].mean())
+    # record = history["record"].sum()
+    # r_flag = 1 if record > 0 else -1
     # MDD = history["ROE"].min()
     # unrealized_pnl = history["unrealized_pnl", -1] * 0.1
 
     reward = (
-        roe
-        + pnl
-        # + total_roe
-        # + position
-        # + record
+        0
+        # pnl * 3
+        # + position * 0.01
+        # + math.sqrt(abs(record)) * r_flag * 0.01
     )
 
-    if pnl != 0:
-        reward += record
+    if pnl == 0:
+        lifetime_pnl = history["realized_pnl"].sum()
+        lifetime_roe = (initial_valuation + lifetime_pnl) / initial_valuation - 1
+        reward += lifetime_roe
+    else:
+        # total_roe = (history["portfolio_valuation", -1] / initial_valuation - 1) * 100
+        # reward += total_roe
+        # tr = history["portfolio_valuation", -1] / history["portfolio_valuation", 0]
+        # reward *= tr if pnl > 0 else 1
+        # reward -= math.sqrt(position)
+        # reward += math.sqrt(record)
+        reward += pnl if pnl > 0 else (pnl*2)
 
     # if history["position", -2] < 0 and pnl > 0:
     #     reward *= 2
 
-    return reward #((reward**2) if reward > 0 else -(reward**2)) * 0.1
+    return reward  # ((reward**2) if reward > 0 else -(reward**2)) * 0.1
 
 
 def dynamic_feature_last_position_taken(history: History):
@@ -324,8 +336,8 @@ class DiscretedTradingEnv(gym.Env):
                 realized_pnl = portfolio_value - prev_valuation
                 realized_roe = (realized_pnl / prev_valuation) - 1
                 record = 1 if portfolio_value > prev_valuation else -1
-            
-            elif prev_valuation != 0: # switch position
+
+            elif prev_valuation != 0:  # switch position
                 entry_valuation = portfolio_value
                 realized_pnl = portfolio_value - prev_valuation
                 realized_roe = (realized_pnl / prev_valuation) - 1
@@ -333,7 +345,7 @@ class DiscretedTradingEnv(gym.Env):
 
             else:  # open position
                 entry_valuation = portfolio_value
-            
+
         else:  # hold position
             entry_valuation = prev_valuation
 
@@ -362,8 +374,10 @@ class DiscretedTradingEnv(gym.Env):
             realized_roe=realized_roe,
         )
         self.historical_info["reward", -1] = (
-            # -((portfolio_value - prev_valuation) ** 2)
-            -1e4 if self.liquidation else self.reward_function(self.historical_info)
+            # -abs(portfolio_value * 10)
+            -1e4
+            if self.liquidation
+            else self.reward_function(self.historical_info)
         )
 
         # print(self.historical_info["pc_counter"])
