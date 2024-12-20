@@ -21,7 +21,6 @@ warnings.filterwarnings("error")
 def basic_reward_function(history: History):
     # episode_length = len(history)
     initial_valuation = history["entry_valuation", 0]
-    # roe = history["realized_roe", -1]  # * 100 # %
     pnl = history["realized_pnl", -1]
     # (
     #     history["portfolio_valuation", -1] / (history["entry_valuation", -1]) - 1
@@ -46,15 +45,19 @@ def basic_reward_function(history: History):
         _lifetime_roe = (
             initial_valuation + lifetime_pnl + history["unrealized_pnl", -1]
         ) / initial_valuation - 1
-        reward += _lifetime_roe * 10
+        _flag = 1 if _lifetime_roe > 0 else -1
+        reward = (_lifetime_roe ** 2) * _flag
     else:
+        roe = history["realized_roe", -1]  # * 100 # %
         # total_roe = (history["portfolio_valuation", -1] / initial_valuation - 1) * 100
         # reward += total_roe
         # tr = history["portfolio_valuation", -1] / history["portfolio_valuation", 0]
         # reward *= tr if pnl > 0 else 1
         # reward -= math.sqrt(position)
         # reward += math.sqrt(record)
-        reward += pnl if pnl > 0 else (pnl*2)
+        # reward = pnl  # if pnl > 0 else (pnl*2)
+        _flag = 1 if roe > 0 else -1
+        reward = (roe ** 2) * _flag
 
     # if history["position", -2] < 0 and pnl > 0:
     #     reward *= 2
@@ -389,7 +392,7 @@ class DiscretedTradingEnv(gym.Env):
         else:
             reward = self.reward_function(self.historical_info)
 
-        self.historical_info["reward", -1] = reward
+        self.historical_info["reward", -1] = reward + 0.1 + (0.1 if is_position_changed else 0)
 
         # print(self.historical_info["pc_counter"])
 
