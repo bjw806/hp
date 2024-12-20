@@ -42,8 +42,11 @@ def basic_reward_function(history: History):
 
     if pnl == 0:
         lifetime_pnl = history["realized_pnl"].sum()
-        lifetime_roe = (initial_valuation + lifetime_pnl) / initial_valuation - 1
-        reward += lifetime_roe
+        # lifetime_roe = (initial_valuation + lifetime_pnl) / initial_valuation - 1
+        _lifetime_roe = (
+            initial_valuation + lifetime_pnl + history["unrealized_pnl", -1]
+        ) / initial_valuation - 1
+        reward += _lifetime_roe * 10
     else:
         # total_roe = (history["portfolio_valuation", -1] / initial_valuation - 1) * 100
         # reward += total_roe
@@ -192,15 +195,17 @@ class DiscretedTradingEnv(gym.Env):
         realized_total_pnl = self.historical_info["realized_pnl"].sum()
         infos = np.array(
             [
-                realized_total_pnl / self.portfolio_initial_value,  # realized_total_ROE
+                realized_total_pnl / self.portfolio_initial_value
+                - 1,  # realized_total_ROE
                 (realized_total_pnl + self.historical_info["unrealized_pnl", -1])
-                / self.portfolio_initial_value,  # unrealized_total_ROE
+                / self.portfolio_initial_value
+                - 1,  # unrealized_total_ROE
                 self.historical_info["realized_roe", -1],  # realized_ROE
                 self.historical_info["unrealized_roe", -1],  # unrealized_ROE
                 self._position_idx,  # position
                 self._multiplier_idx,  # multiplier
                 self.historical_info["record", -1],  # win or lose
-                self.historical_info["real_position", -1] * 0.1,  # real position
+                self.historical_info["real_position", -1] * 0.01,  # real position
                 # <- too larger than other values (-50 ~ 50)
             ]
         )
@@ -373,12 +378,18 @@ class DiscretedTradingEnv(gym.Env):
             realized_pnl=realized_pnl,
             realized_roe=realized_roe,
         )
-        self.historical_info["reward", -1] = (
-            # -abs(portfolio_value * 10)
-            -1e4
-            if self.liquidation
-            else self.reward_function(self.historical_info)
-        )
+
+        if self.liquidation:
+            if portfolio_value > prev_valuation:
+                reward = portfolio_value
+            else:
+                reward = prev_valuation
+            reward *= self.multiplier[self._multiplier_idx]
+            reward = -abs(reward)
+        else:
+            reward = self.reward_function(self.historical_info)
+
+        self.historical_info["reward", -1] = reward
 
         # print(self.historical_info["pc_counter"])
 
@@ -486,13 +497,13 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
         if self.btc_index:
             p = dataset_path.split("/")[:-1]
 
-            BTCUSDT_PATH = "/".join(p + ["binanceusdm-BTCUSDT-15m.pkl"])
+            BTCUSDT_PATH = "/".join(p + ["binanceusdm-BTCUSDT-5m.pkl"])
             BTCUSDT = pd.read_pickle(BTCUSDT_PATH)
             BTCUSDT = pd.DataFrame(
                 {"feature_btc_log_returns": np.log(BTCUSDT.close).diff()}
             )
 
-            BTCDOMUSDT_PATH = "/".join(p + ["binanceusdm-BTCDOMUSDT-15m.pkl"])
+            BTCDOMUSDT_PATH = "/".join(p + ["binanceusdm-BTCDOMUSDT-5m.pkl"])
             BTCDOMUSDT = pd.read_pickle(BTCDOMUSDT_PATH)
             BTCDOMUSDT = pd.DataFrame(
                 {"feature_btcdom_log_returns": np.log(BTCDOMUSDT.close).diff()}
