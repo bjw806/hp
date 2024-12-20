@@ -39,25 +39,25 @@ def basic_reward_function(history: History):
         # + math.sqrt(abs(record)) * r_flag * 0.01
     )
 
-    if pnl == 0:
-        lifetime_pnl = history["realized_pnl"].sum()
-        # lifetime_roe = (initial_valuation + lifetime_pnl) / initial_valuation - 1
-        _lifetime_roe = (
-            initial_valuation + lifetime_pnl + history["unrealized_pnl", -1]
-        ) / initial_valuation - 1
-        _flag = 1 if _lifetime_roe > 0 else -1
-        reward = (_lifetime_roe ** 2) * _flag
-    else:
-        roe = history["realized_roe", -1]  # * 100 # %
+    # if pnl == 0:
+    lifetime_pnl = history["realized_pnl"].sum()
+    # lifetime_roe = (initial_valuation + lifetime_pnl) / initial_valuation - 1
+    _lifetime_roe = (
+        initial_valuation + lifetime_pnl + history["unrealized_pnl", -1]
+    ) / initial_valuation - 1
+    _flag = 1 if _lifetime_roe > 0 else -1
+    reward = (_lifetime_roe ** 2) * _flag
+    # else:
+    # roe = history["realized_roe", -1]  # * 100 # %
         # total_roe = (history["portfolio_valuation", -1] / initial_valuation - 1) * 100
         # reward += total_roe
         # tr = history["portfolio_valuation", -1] / history["portfolio_valuation", 0]
         # reward *= tr if pnl > 0 else 1
         # reward -= math.sqrt(position)
         # reward += math.sqrt(record)
-        # reward = pnl  # if pnl > 0 else (pnl*2)
-        _flag = 1 if roe > 0 else -1
-        reward = (roe ** 2) * _flag
+    reward = pnl  # if pnl > 0 else (pnl*2)
+    # _flag = 1 if roe > 0 else -1
+    # reward += roe
 
     # if history["position", -2] < 0 and pnl > 0:
     #     reward *= 2
@@ -337,6 +337,7 @@ class DiscretedTradingEnv(gym.Env):
         prev_valuation = self.historical_info["entry_valuation", -1]
         realized_pnl = 0
         realized_roe = 0
+        no_position_panelty = 0
 
         if is_position_changed:
             if self._position == 0:  # close position
@@ -356,6 +357,8 @@ class DiscretedTradingEnv(gym.Env):
 
         else:  # hold position
             entry_valuation = prev_valuation
+            if self._position == 0:
+                no_position_panelty -= 0.1
 
         self.historical_info.add(
             idx=self._idx,
@@ -390,9 +393,9 @@ class DiscretedTradingEnv(gym.Env):
             reward *= self.multiplier[self._multiplier_idx]
             reward = -abs(reward)
         else:
-            reward = self.reward_function(self.historical_info)
+            reward = self.reward_function(self.historical_info) + 0.1 + no_position_panelty
 
-        self.historical_info["reward", -1] = reward + 0.1 + (0.1 if is_position_changed else 0)
+        self.historical_info["reward", -1] = reward
 
         # print(self.historical_info["pc_counter"])
 
