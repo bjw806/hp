@@ -311,7 +311,7 @@ class DiscretedTradingEnv(gym.Env):
         #     self.backup_value_counter -= 1
 
         self._position_idx = position_index[0]
-        pos = self.positions[self._position_idx]
+        pos = self.positions[self._position_idx] * 2
 
         if pos > 0:
             self.long_counter += 1
@@ -515,7 +515,7 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
             self.dataset_nb_uses == self.dataset_nb_uses.min()
         )[0]
         # Pick one of them
-        random_int = np.random.randint(potential_dataset_pathes.size)
+        random_int = np.random.choice(potential_dataset_pathes)
         dataset_path = self.dataset_pathes[random_int]
         self.dataset_nb_uses[random_int] += 1  # Update nb use counts
 
