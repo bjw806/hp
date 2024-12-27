@@ -1,7 +1,6 @@
 import datetime
 import glob
 import math
-from mimetypes import init
 import os
 import warnings
 from pathlib import Path
@@ -13,7 +12,6 @@ import pandas as pd
 from gym_trading_env.utils.history import History
 from gym_trading_env.utils.portfolio import TargetPortfolio
 from gymnasium import spaces
-from sympy import li
 
 warnings.filterwarnings("error")
 
@@ -26,7 +24,9 @@ def basic_reward_function(history: History):
     #     history["portfolio_valuation", -1] / (history["entry_valuation", -1]) - 1
     # )  # * math.sqrt(math.sqrt(3000 - episode_length))
 
-    # position = abs(history["position"].mean())
+    position = history["position"]
+    position = position[position != 0]
+    position = abs(position.mean()) if position.size > 0 else 0
     # record = history["record"].sum()
     # r_flag = 1 if record > 0 else -1
     # MDD = history["ROE"].min()
@@ -39,7 +39,7 @@ def basic_reward_function(history: History):
         # + math.sqrt(abs(record)) * r_flag * 0.01
     )
 
-    # if pnl == 0:
+    if pnl == 0:
     #     lifetime_pnl = history["realized_pnl"].sum()
     #     # lifetime_roe = (initial_valuation + lifetime_pnl) / initial_valuation - 1
     #     _lifetime_roe = (
@@ -48,15 +48,15 @@ def basic_reward_function(history: History):
     #     _flag = 1 if _lifetime_roe > 0 else -1
     #     reward += (_lifetime_roe**2) * _flag
     # reward += _lifetime_roe
-    # else:
+        reward -= position
+    else:
     #     roe = history["realized_roe", -1]  # * 100 # %
     #     total_roe = (history["portfolio_valuation", -1] / initial_valuation - 1) * 100
     #     reward += total_roe
     #     tr = history["portfolio_valuation", -1] / history["portfolio_valuation", 0]
     #     reward *= tr if pnl > 0 else 1
-    #     # reward -= math.sqrt(position)
+        reward += history["realized_roe", -1]  # if pnl > 0 else (pnl*2)
     #     # reward += math.sqrt(record)
-    reward = pnl  # if pnl > 0 else (pnl*2)
     # _flag = 1 if roe > 0 else -1
     # reward += roe
 
@@ -203,10 +203,9 @@ class DiscretedTradingEnv(gym.Env):
                 - 1,  # unrealized_total_ROE
                 self.historical_info["realized_roe", -1],  # realized_ROE
                 self.historical_info["unrealized_roe", -1],  # unrealized_ROE
-                self._position_idx,  # position
+                self._position,  # position
                 self.historical_info["record", -1],  # win or lose
-                self.historical_info["real_position", -1] * 0.01,  # real position
-                # <- too larger than other values (-50 ~ 50)
+                self.historical_info["real_position", -1],  # real position
             ]
         )
 
@@ -228,7 +227,7 @@ class DiscretedTradingEnv(gym.Env):
         self.short_counter = 0
         self.long_counter = 0
         self._step = 0
-        self._position = 0
+        self._position = np.random.choice(self.positions)
         self._limit_orders = {}
         self._idx = self.window_size - 1
 
@@ -302,16 +301,8 @@ class DiscretedTradingEnv(gym.Env):
         self._limit_orders[position] = {"limit": limit, "persistent": persistent}
 
     def step(self, position_index=None):
-        # if self._portfolio.fiat > 2000:
-        #     floor = self._portfolio.fiat // 1000
-        #     self._portfolio.fiat = self._portfolio.fiat % 1000 + 1000
-        #     self.backup_value_counter += floor - 1
-        # elif self._portfolio.fiat < 100 and self.backup_value_counter > 0:
-        #     self._portfolio.fiat += 1000
-        #     self.backup_value_counter -= 1
-
         self._position_idx = position_index[0]
-        pos = self.positions[self._position_idx] * 2
+        pos = self.positions[self._position_idx]
 
         if pos > 0:
             self.long_counter += 1
@@ -424,6 +415,7 @@ class DiscretedTradingEnv(gym.Env):
         # print(self.historical_info["pc_counter"])
 
         if done or truncated:
+            # self.historical_info["reward", -1] = portfolio_value - self.portfolio_initial_value
             self.calculate_metrics()
             self.log()
 

@@ -26,7 +26,10 @@ def basic_reward_function(history: History):
     #     history["portfolio_valuation", -1] / (history["entry_valuation", -1]) - 1
     # )  # * math.sqrt(math.sqrt(3000 - episode_length))
 
-    # position = abs(history["position"].mean())
+
+    # position = history["position"]
+    # position = position[position != 0]
+    # position = abs(position.mean()) if position.size > 0 else 0
     # record = history["record"].sum()
     # r_flag = 1 if record > 0 else -1
     # MDD = history["ROE"].min()
@@ -205,10 +208,10 @@ class DiscretedTradingEnv(gym.Env):
                 - 1,  # unrealized_total_ROE
                 self.historical_info["realized_roe", -1],  # realized_ROE
                 self.historical_info["unrealized_roe", -1],  # unrealized_ROE
-                self._position_idx,  # position
-                self._multiplier_idx,  # multiplier
+                self._position,  # position
+                self.multiplier[self._multiplier_idx],  # multiplier
                 self.historical_info["record", -1],  # win or lose
-                self.historical_info["real_position", -1] * 0.01,  # real position
+                self.historical_info["real_position", -1],  # real position
                 # <- too larger than other values (-50 ~ 50)
             ]
         )
@@ -228,7 +231,7 @@ class DiscretedTradingEnv(gym.Env):
         self.pc_counter = 0
         self.liquidation = False
         self._step = 0
-        self._position = 0
+        self._position = np.random.choice(self.positions) * np.random.choice(self.multiplier)
         self._limit_orders = {}
         self._idx = self.window_size - 1
 
@@ -263,6 +266,7 @@ class DiscretedTradingEnv(gym.Env):
             unrealized_roe=0,
             realized_pnl=0,
             realized_roe=0,
+            hold_time=0,
         )
 
         return self._get_obs(), self.historical_info[0]
@@ -345,20 +349,26 @@ class DiscretedTradingEnv(gym.Env):
                 realized_pnl = portfolio_value - prev_valuation
                 realized_roe = (realized_pnl / prev_valuation) - 1
                 record = 1 if portfolio_value > prev_valuation else -1
+                hold_time = 0
 
             elif prev_valuation != 0:  # switch position
                 entry_valuation = portfolio_value
                 realized_pnl = portfolio_value - prev_valuation
                 realized_roe = (realized_pnl / prev_valuation) - 1
                 record = 1 if portfolio_value > prev_valuation else -1
+                hold_time = 1
 
             else:  # open position
                 entry_valuation = portfolio_value
+                hold_time = 1
 
         else:  # hold position
             entry_valuation = prev_valuation
-            if self._position == 0:
-                no_position_panelty -= 0.1
+            # if self._position == 0:
+            #     no_position_panelty -= 0.1
+            # else:
+            #     no_position_panelty += 0.1
+            hold_time = self.historical_info["hold_time", -1] + 1
 
         self.historical_info.add(
             idx=self._idx,
@@ -383,6 +393,7 @@ class DiscretedTradingEnv(gym.Env):
             else ((portfolio_value / prev_valuation) - 1),
             realized_pnl=realized_pnl,
             realized_roe=realized_roe,
+            hold_time=hold_time,
         )
 
         if self.liquidation:
@@ -393,13 +404,18 @@ class DiscretedTradingEnv(gym.Env):
             reward *= self.multiplier[self._multiplier_idx]
             reward = -abs(reward)
         else:
-            reward = self.reward_function(self.historical_info) + 0.1 + no_position_panelty
+            reward = self.reward_function(
+                self.historical_info
+            )  # + 0.1 + no_position_panelty
+            # reward += self.backup_value_counter
+            # norm =  abs(self.long_counter - self.short_counter) / (self.long_counter + self.short_counter)
+            # reward -= norm * 0.1
 
         self.historical_info["reward", -1] = reward
 
         # print(self.historical_info["pc_counter"])
 
-        if truncated:
+        if done or truncated:
             self.calculate_metrics()
             self.log()
 
@@ -479,9 +495,7 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
         self.btc_index = btc_index
 
         if self.btc_index:
-            for k, v in enumerate(self.dataset_pathes):
-                if "BTC" in v:
-                    self.dataset_pathes.pop(k - 1)
+            self.dataset_pathes = [v for v in self.dataset_pathes if "BTC" not in v]
 
         self.dataset_nb_uses = np.zeros(shape=(len(self.dataset_pathes),))
         super().__init__(self.next_dataset(), *args, **kwargs)
@@ -493,7 +507,7 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
             self.dataset_nb_uses == self.dataset_nb_uses.min()
         )[0]
         # Pick one of them
-        random_int = np.random.randint(potential_dataset_pathes.size)
+        random_int = np.random.choice(potential_dataset_pathes)
         dataset_path = self.dataset_pathes[random_int]
         self.dataset_nb_uses[random_int] += 1  # Update nb use counts
 
