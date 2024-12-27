@@ -14,7 +14,7 @@ from gym_trading_env.utils.history import History
 from gym_trading_env.utils.portfolio import TargetPortfolio
 from gymnasium import spaces
 from sympy import li
-from torch import rand
+from torch import mul, rand
 
 warnings.filterwarnings("error")
 
@@ -237,7 +237,8 @@ class DiscretedTradingEnv(gym.Env):
         self.pc_counter = 0
         self.liquidation = False
         self._step = 0
-        self._position = np.random.choice(self.positions) * np.random.choice(self.multiplier)
+        rnd_multiplier = np.random.choice(self.multiplier)
+        self._position = np.random.choice(self.positions) * rnd_multiplier
         self._limit_orders = {}
         self._idx = self.window_size - 1
 
@@ -273,6 +274,7 @@ class DiscretedTradingEnv(gym.Env):
             realized_pnl=0,
             realized_roe=0,
             hold_time=0,
+            multiplier=rnd_multiplier,
         )
 
         return self._get_obs(), self.historical_info[0]
@@ -398,6 +400,7 @@ class DiscretedTradingEnv(gym.Env):
             realized_pnl=realized_pnl,
             realized_roe=realized_roe,
             hold_time=hold_time,
+            multiplier=self.multiplier[self._multiplier_idx],
         )
 
         if self.liquidation:
