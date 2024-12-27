@@ -42,30 +42,35 @@ def basic_reward_function(history: History):
         # + math.sqrt(abs(record)) * r_flag * 0.01
     )
 
-    # if pnl == 0:
-    lifetime_pnl = history["realized_pnl"].sum()
-    # lifetime_roe = (initial_valuation + lifetime_pnl) / initial_valuation - 1
-    _lifetime_roe = (
-        initial_valuation + lifetime_pnl + history["unrealized_pnl", -1]
-    ) / initial_valuation - 1
-    _flag = 1 if _lifetime_roe > 0 else -1
-    reward = (_lifetime_roe ** 2) * _flag
-    # else:
-    # roe = history["realized_roe", -1]  # * 100 # %
+    if pnl == 0:
+        lifetime_pnl = history["realized_pnl"].sum()
+        # lifetime_roe = (initial_valuation + lifetime_pnl) / initial_valuation - 1
+        _lifetime_roe = (
+            initial_valuation + lifetime_pnl + history["unrealized_pnl", -1]
+        ) / initial_valuation - 1
+        # _flag = 1 if _lifetime_roe > 0 else -1
+        # reward = (_lifetime_roe ** 2) * _flag
+        reward += _lifetime_roe
+        reward = 0
+    else:
+        roe = history["realized_roe", -1] * 100 # %
+        # if roe < 0:
+        #     roe *= 0.5
+        # reward += roe
         # total_roe = (history["portfolio_valuation", -1] / initial_valuation - 1) * 100
         # reward += total_roe
         # tr = history["portfolio_valuation", -1] / history["portfolio_valuation", 0]
         # reward *= tr if pnl > 0 else 1
-        # reward -= math.sqrt(position)
+        # reward -= position
         # reward += math.sqrt(record)
-    reward = pnl  # if pnl > 0 else (pnl*2)
+        reward = roe  # if pnl > 0 else (pnl*2)
     # _flag = 1 if roe > 0 else -1
     # reward += roe
 
     # if history["position", -2] < 0 and pnl > 0:
     #     reward *= 2
 
-    return reward  # ((reward**2) if reward > 0 else -(reward**2)) * 0.1
+    return reward
 
 
 def dynamic_feature_last_position_taken(history: History):
@@ -209,9 +214,9 @@ class DiscretedTradingEnv(gym.Env):
                 self.historical_info["realized_roe", -1],  # realized_ROE
                 self.historical_info["unrealized_roe", -1],  # unrealized_ROE
                 self._position,  # position
-                self.multiplier[self._multiplier_idx],  # multiplier
+                self.multiplier[self._multiplier_idx] * 0.01,  # multiplier
                 self.historical_info["record", -1],  # win or lose
-                self.historical_info["real_position", -1],  # real position
+                self.historical_info["real_position", -1] * 0.01,  # real position
                 # <- too larger than other values (-50 ~ 50)
             ]
         )
@@ -325,7 +330,7 @@ class DiscretedTradingEnv(gym.Env):
         done, truncated = False, False
         is_position_changed = self._position != temp_position
 
-        if portfolio_value <= 100:  # liquidation at 5% of initial value
+        if portfolio_value <= 10:  # liquidation at 5% of initial value
             done = True
             self.liquidation = True
             # portfolio_value = 1
@@ -344,20 +349,18 @@ class DiscretedTradingEnv(gym.Env):
         no_position_panelty = 0
 
         if is_position_changed:
-            if self._position == 0:  # close position
-                entry_valuation = 0
-                realized_pnl = portfolio_value - prev_valuation
-                realized_roe = (realized_pnl / prev_valuation) - 1
-                record = 1 if portfolio_value > prev_valuation else -1
-                hold_time = 0
+            if self._position == 0 or prev_valuation == 0:
+                if self._position == 0:  # close position
+                    entry_valuation = 0
+                    hold_time = 0
 
-            elif prev_valuation != 0:  # switch position
-                entry_valuation = portfolio_value
-                realized_pnl = portfolio_value - prev_valuation
-                realized_roe = (realized_pnl / prev_valuation) - 1
-                record = 1 if portfolio_value > prev_valuation else -1
-                hold_time = 1
+                elif prev_valuation != 0:  # switch position
+                    entry_valuation = portfolio_value
+                    hold_time = 1
 
+                realized_pnl = portfolio_value - prev_valuation
+                realized_roe = realized_pnl / prev_valuation
+                record = 1 if portfolio_value > prev_valuation else -1
             else:  # open position
                 entry_valuation = portfolio_value
                 hold_time = 1
@@ -403,6 +406,8 @@ class DiscretedTradingEnv(gym.Env):
                 reward = prev_valuation
             reward *= self.multiplier[self._multiplier_idx]
             reward = -abs(reward)
+
+            reward = 0
         else:
             reward = self.reward_function(
                 self.historical_info
@@ -416,6 +421,7 @@ class DiscretedTradingEnv(gym.Env):
         # print(self.historical_info["pc_counter"])
 
         if done or truncated:
+            # self.historical_info["reward", -1] = portfolio_value - self.portfolio_initial_value
             self.calculate_metrics()
             self.log()
 
