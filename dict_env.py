@@ -14,6 +14,7 @@ from gym_trading_env.utils.history import History
 from gym_trading_env.utils.portfolio import TargetPortfolio
 from gymnasium import spaces
 from sympy import li
+from torch import rand
 
 warnings.filterwarnings("error")
 
@@ -130,9 +131,9 @@ class DiscretedTradingEnv(gym.Env):
             "realized_ROE",
             "unrealized_total_ROE",
             "unrealized_ROE",
-            "position",
-            "multiplier",
-            "record",
+            # "position",
+            # "multiplier",
+            # "record",
             "real_position",
         ]
         self.max_episode_duration = max_episode_duration
@@ -213,9 +214,9 @@ class DiscretedTradingEnv(gym.Env):
                 - 1,  # unrealized_total_ROE
                 self.historical_info["realized_roe", -1],  # realized_ROE
                 self.historical_info["unrealized_roe", -1],  # unrealized_ROE
-                self._position,  # position
-                self.multiplier[self._multiplier_idx] * 0.01,  # multiplier
-                self.historical_info["record", -1],  # win or lose
+                # self._position,  # position
+                # self.multiplier[self._multiplier_idx] * 0.01,  # multiplier
+                # self.historical_info["record", -1],  # win or lose
                 self.historical_info["real_position", -1] * 0.01,  # real position
                 # <- too larger than other values (-50 ~ 50)
             ]
@@ -407,7 +408,7 @@ class DiscretedTradingEnv(gym.Env):
             reward *= self.multiplier[self._multiplier_idx]
             reward = -abs(reward)
 
-            reward = 0
+            reward = -1
         else:
             reward = self.reward_function(
                 self.historical_info
@@ -513,7 +514,8 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
             self.dataset_nb_uses == self.dataset_nb_uses.min()
         )[0]
         # Pick one of them
-        random_int = np.random.choice(potential_dataset_pathes)
+        rng = np.random.default_rng()
+        random_int = rng.choice(potential_dataset_pathes)
         dataset_path = self.dataset_pathes[random_int]
         self.dataset_nb_uses[random_int] += 1  # Update nb use counts
 
