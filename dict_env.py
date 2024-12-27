@@ -349,7 +349,7 @@ class DiscretedTradingEnv(gym.Env):
         no_position_panelty = 0
 
         if is_position_changed:
-            if self._position == 0 or prev_valuation == 0:
+            if self._position == 0 or prev_valuation != 0:
                 if self._position == 0:  # close position
                     entry_valuation = 0
                     hold_time = 0
