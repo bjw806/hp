@@ -16,38 +16,29 @@ warnings.filterwarnings("error")
 
 
 def basic_reward_function(history: History):
-    # episode_length = len(history)
-    initial_valuation = history["entry_valuation", 0]
+    reward = 0
     pnl = history["realized_pnl", -1]
-    # (
-    #     history["portfolio_valuation", -1] / (history["entry_valuation", -1]) - 1
-    # )  # * math.sqrt(math.sqrt(3000 - episode_length))
-
-    # position = history["position"]
-    # position = position[position != 0]
-    # position = abs(position.mean()) if position.size > 0 else 0
-    # record = history["record"].sum()
-    # r_flag = 1 if record > 0 else -1
-    # MDD = history["ROE"].min()
-    # unrealized_pnl = history["unrealized_pnl", -1] * 0.1
-
-    reward = (
-        0
-        # pnl * 3
-        # + position * 0.01
-        # + math.sqrt(abs(record)) * r_flag * 0.01
-    )
 
     if pnl == 0:
-        lifetime_pnl = history["realized_pnl"].sum()
-        # lifetime_roe = (initial_valuation + lifetime_pnl) / initial_valuation - 1
-        _lifetime_roe = (
-            initial_valuation + lifetime_pnl + history["unrealized_pnl", -1]
-        ) / initial_valuation - 1
-        # _flag = 1 if _lifetime_roe > 0 else -1
-        # reward = (_lifetime_roe ** 2) * _flag
-        reward += _lifetime_roe
-        reward = 0
+        # 포지션이 0이 아닌 마지막 시점 찾기 (뒤에서부터 탐색)
+        positions = history["position"]
+
+        last_non_zero_position_idx = (
+            len(positions) - 1 - (positions[::-1] != 0).argmax()
+            if (positions != 0).any()
+            else -1
+        )
+
+        # 마지막 포지션이 0이 아닌 시점 바로 다음부터 현재까지의 data_close 분산 계산
+        recent_data_close = history["data_close", last_non_zero_position_idx + 1 :]
+
+        variance_penalty = (
+            recent_data_close.var()
+            if len(recent_data_close) > 12  # 5m * 12 = 1h
+            else 0
+        )
+
+        reward -= variance_penalty  # 분산을 패널티로 적용
     else:
         # roe = history["realized_roe", -1] * 100  # %
         # if roe < 0:
@@ -62,11 +53,6 @@ def basic_reward_function(history: History):
         cummulative_pnl = history["realized_pnl"].sum()
         reward += cummulative_pnl  # if pnl > 0 else (pnl*2)
         reward += pnl
-    # _flag = 1 if roe > 0 else -1
-    # reward += roe
-
-    # if history["position", -2] < 0 and pnl > 0:
-    #     reward *= 2
 
     return reward
 
