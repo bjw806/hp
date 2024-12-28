@@ -159,11 +159,11 @@ def preprocess_timexer(df):
 
     dataframe = pd.DataFrame(
         dict(
-            feature_open_lr=np.log(df.open / prev_close),
-            feature_high_lr=np.log(df.high / prev_close),
-            feature_low_lr=np.log(df.low / prev_close),
-            feature_log_returns=np.log(df.close).diff(),
-            feature_volume_lr=np.log1p(df.volume).diff(),
+            feature_open=df.open,
+            feature_high=df.high,
+            feature_low=df.low,
+            feature_close=df.close,
+            feature_volume=df.volume,
             open=df.open,
             high=df.high,
             low=df.low,

@@ -49,7 +49,7 @@ def basic_reward_function(history: History):
         reward += _lifetime_roe
         reward = 0
     else:
-        roe = history["realized_roe", -1] * 100  # %
+        # roe = history["realized_roe", -1] * 100  # %
         # if roe < 0:
         #     roe *= 0.5
         # reward += roe
@@ -59,7 +59,9 @@ def basic_reward_function(history: History):
         # reward *= tr if pnl > 0 else 1
         # reward -= position
         # reward += math.sqrt(record)
-        reward =  history["real_position", -1]  # if pnl > 0 else (pnl*2)
+        cummulative_pnl = history["realized_pnl"].sum()
+        reward += cummulative_pnl  # if pnl > 0 else (pnl*2)
+        reward += pnl
     # _flag = 1 if roe > 0 else -1
     # reward += roe
 
@@ -525,17 +527,17 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
 
             BTCUSDT_PATH = "/".join(p + ["binanceusdm-BTCUSDT-5m.pkl"])
             BTCUSDT = pd.read_pickle(BTCUSDT_PATH)
-            BTCUSDT = pd.DataFrame(
-                {"feature_btc_log_returns": np.log(BTCUSDT.close).diff()}
-            )
-            # BTCUSDT = pd.DataFrame({"feature_btc": BTCUSDT.close})
+            # BTCUSDT = pd.DataFrame(
+            #     {"feature_btc_log_returns": np.log(BTCUSDT.close).diff()}
+            # )
+            BTCUSDT = pd.DataFrame({"feature_btc": BTCUSDT.close})
 
             BTCDOMUSDT_PATH = "/".join(p + ["binanceusdm-BTCDOMUSDT-5m.pkl"])
             BTCDOMUSDT = pd.read_pickle(BTCDOMUSDT_PATH)
-            BTCDOMUSDT = pd.DataFrame(
-                {"feature_btcdom_log_returns": np.log(BTCDOMUSDT.close).diff()}
-            )
-            # BTCDOMUSDT = pd.DataFrame({"feature_btcdom": BTCDOMUSDT.close})
+            # BTCDOMUSDT = pd.DataFrame(
+            #     {"feature_btcdom_log_returns": np.log(BTCDOMUSDT.close).diff()}
+            # )
+            BTCDOMUSDT = pd.DataFrame({"feature_btcdom": BTCDOMUSDT.close})
 
             df = pd.concat([BTCUSDT, BTCDOMUSDT, df], axis=1)
 
