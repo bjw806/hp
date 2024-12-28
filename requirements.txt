@@ -6,4 +6,11 @@ gputil
 ipywidgets
 jupyterlab
 matplotlib
+scikit-learn
+python-binance
 git+https://github.com/Toni-SM/skrl.git@develop
+einops
+patool
+reformer-pytorch
+sktime
+sympy

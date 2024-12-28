@@ -154,6 +154,27 @@ def preprocess(df):
     return dataframe#.fillna(-1)
 
 
+def preprocess_timexer(df):
+    prev_close = df.close.shift(1)
+
+    dataframe = pd.DataFrame(
+        dict(
+            feature_open_lr=np.log(df.open / prev_close),
+            feature_high_lr=np.log(df.high / prev_close),
+            feature_low_lr=np.log(df.low / prev_close),
+            feature_log_returns=np.log(df.close).diff(),
+            feature_volume_lr=np.log1p(df.volume).diff(),
+            open=df.open,
+            high=df.high,
+            low=df.low,
+            close=df.close,
+            volume=df.volume,
+        )
+    )
+
+    return dataframe
+
+
 def only_sub_indicators(df):
     df["fast_k"] = stochastic_fast_k(df, 5)
     df["feature_slow_stochastic_k"] = stochastic_slow_k(df.fast_k, 3)
