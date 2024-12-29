@@ -20,25 +20,28 @@ def basic_reward_function(history: History):
     pnl = history["realized_pnl", -1]
 
     if pnl == 0:
-        # 포지션이 0이 아닌 마지막 시점 찾기 (뒤에서부터 탐색)
-        positions = history["position"]
+        if history["position", -1] == 0:
+            # 포지션이 0이 아닌 마지막 시점 찾기 (뒤에서부터 탐색)
+            positions = history["position"]
 
-        last_non_zero_position_idx = (
-            len(positions) - 1 - (positions[::-1] != 0).argmax()
-            if (positions != 0).any()
-            else -1
-        )
+            last_non_zero_position_idx = (
+                len(positions) - 1 - (positions[::-1] != 0).argmax()
+                if (positions != 0).any()
+                else -1
+            )
 
-        # 마지막 포지션이 0이 아닌 시점 바로 다음부터 현재까지의 data_close 분산 계산
-        recent_data_close = history["data_close", last_non_zero_position_idx + 1 :]
+            # 마지막 포지션이 0이 아닌 시점 바로 다음부터 현재까지의 data_close 분산 계산
+            recent_data_close = history["data_close", last_non_zero_position_idx + 1 :]
 
-        variance_penalty = (
-            recent_data_close.var()
-            if len(recent_data_close) > 12  # 5m * 12 = 1h
-            else 0
-        )
+            variance_penalty = (
+                recent_data_close.var()
+                if len(recent_data_close) > 12  # 5m * 12 = 1h
+                else 0
+            )
 
-        reward -= variance_penalty  # 분산을 패널티로 적용
+            reward -= variance_penalty  # 분산을 패널티로 적용
+        else:
+            pass
     else:
         # roe = history["realized_roe", -1] * 100  # %
         # if roe < 0:
@@ -50,8 +53,8 @@ def basic_reward_function(history: History):
         # reward *= tr if pnl > 0 else 1
         # reward -= position
         # reward += math.sqrt(record)
-        cummulative_pnl = history["realized_pnl"].sum()
-        reward += cummulative_pnl  # if pnl > 0 else (pnl*2)
+        # cummulative_pnl = history["realized_pnl"].sum()
+        # reward += cummulative_pnl  # if pnl > 0 else (pnl*2)
         reward += pnl
 
     return reward
@@ -316,7 +319,7 @@ class DiscretedTradingEnv(gym.Env):
         done, truncated = False, False
         is_position_changed = self._position != temp_position
 
-        if portfolio_value <= 10:  # liquidation at 5% of initial value
+        if portfolio_value <= 50:  # liquidation at 5% of initial value
             done = True
             self.liquidation = True
             # portfolio_value = 1
@@ -391,10 +394,8 @@ class DiscretedTradingEnv(gym.Env):
                 reward = portfolio_value
             else:
                 reward = prev_valuation
-            reward *= self.multiplier[self._multiplier_idx]
+            # reward *= self.multiplier[self._multiplier_idx]
             reward = -abs(reward)
-
-            reward = -1
         else:
             reward = self.reward_function(
                 self.historical_info
