@@ -31,7 +31,8 @@ def basic_reward_function(history: History):
             )
 
             # 마지막 포지션이 0이 아닌 시점 바로 다음부터 현재까지의 data_close 분산 계산
-            recent_data_close = history["data_close", last_non_zero_position_idx + 1 :]
+            data_close = history["data_close", last_non_zero_position_idx + 1 :]
+            recent_data_close = np.diff(data_close) / data_close[:-1]
 
             variance_penalty = (
                 recent_data_close.var()
