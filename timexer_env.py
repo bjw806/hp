@@ -2,6 +2,7 @@ import datetime
 import glob
 import os
 import warnings
+import math
 from pathlib import Path
 from typing import Callable
 
@@ -41,6 +42,7 @@ def basic_reward_function(history: History):
             )
 
             reward -= variance_penalty  # 분산을 패널티로 적용
+            reward *= 10
         else:
             pass
     else:
@@ -182,6 +184,7 @@ class DiscretedTradingEnv(gym.Env):
         _step_index = np.arange(self._idx + 1 - self.window_size, self._idx + 1)
         observation = self._obs_array[_step_index]
 
+        """
         for i in range(observation.shape[1]):
             col = observation[:, i]
             min_val = np.min(col)
@@ -190,7 +193,20 @@ class DiscretedTradingEnv(gym.Env):
             observation[:, i] = (
                 (col - min_val) / (max_val - min_val) if max_val - min_val != 0 else 0
             )
+        """
 
+        # 1열과 2열 각각 정규화
+        for i in range(2):
+            col = observation[:, i]
+            col_range = np.ptp(col)  # 최대값 - 최소값 계산
+            observation[:, i] = np.where(col_range != 0, (col - np.min(col)) / col_range, 0)
+
+        # 3열부터 7열까지 함께 정규화
+        cols_to_normalize = slice(2, 7)
+        cols = observation[:, cols_to_normalize]
+        col_range = np.ptp(cols)  # 전체 범위 계산
+        observation[:, cols_to_normalize] = np.where(col_range != 0, (cols - np.min(cols)) / col_range, 0)
+        
         realized_total_pnl = self.historical_info["realized_pnl"].sum()
         infos = np.array(
             [
@@ -320,7 +336,7 @@ class DiscretedTradingEnv(gym.Env):
         done, truncated = False, False
         is_position_changed = self._position != temp_position
 
-        if portfolio_value <= 50:  # liquidation at 5% of initial value
+        if portfolio_value <= self.portfolio_initial_value * 0.1:
             done = True
             self.liquidation = True
             # portfolio_value = 1
@@ -391,11 +407,8 @@ class DiscretedTradingEnv(gym.Env):
         )
 
         if self.liquidation:
-            if portfolio_value > prev_valuation:
-                reward = portfolio_value
-            else:
-                reward = prev_valuation
-            # reward *= self.multiplier[self._multiplier_idx]
+            reward = max(portfolio_value, prev_valuation, self.portfolio_initial_value)
+            # reward *= math.sqrt(self.multiplier[self._multiplier_idx])
             reward = -abs(reward)
         else:
             reward = self.reward_function(
@@ -511,7 +524,7 @@ class MultiDatasetDiscretedTradingEnv(DiscretedTradingEnv):
         df = self.preprocess(pd.read_pickle(dataset_path))
 
         if self.btc_index:
-            p = dataset_path.split("\\")[:-1]
+            p = dataset_path.split("/")[:-1]
 
             BTCUSDT_PATH = "/".join(p + ["binanceusdm-BTCUSDT-5m.pkl"])
             BTCUSDT = pd.read_pickle(BTCUSDT_PATH)
