@@ -19,11 +19,13 @@ warnings.filterwarnings("error")
 def basic_reward_function(history: History):
     reward = 0
     pnl = history["realized_pnl", -1]
+    # roe = history["realized_roe", -1] * 100
+    positions = history["position"]
+    current_position = positions[-1]
 
     if pnl == 0:
-        if history["position", -1] == 0:
+        if current_position == 0:  # no position
             # 포지션이 0이 아닌 마지막 시점 찾기 (뒤에서부터 탐색)
-            positions = history["position"]
 
             last_non_zero_position_idx = (
                 len(positions) - 1 - (positions[::-1] != 0).argmax()
@@ -33,32 +35,37 @@ def basic_reward_function(history: History):
 
             # 마지막 포지션이 0이 아닌 시점 바로 다음부터 현재까지의 data_close 분산 계산
             data_close = history["data_close", last_non_zero_position_idx + 1 :]
-            recent_data_close = np.diff(data_close) / data_close[:-1]
 
-            variance_penalty = (
-                recent_data_close.var()
-                if len(recent_data_close) > 12  # 5m * 12 = 1h
-                else 0
-            )
-
-            reward -= variance_penalty  # 분산을 패널티로 적용
-            reward *= 10
-        else:
-            pass
-    else:
-        # roe = history["realized_roe", -1] * 100  # %
-        # if roe < 0:
-        #     roe *= 0.5
-        # reward += roe
-        # total_roe = (history["portfolio_valuation", -1] / initial_valuation - 1) * 100
-        # reward += total_roe
-        # tr = history["portfolio_valuation", -1] / history["portfolio_valuation", 0]
-        # reward *= tr if pnl > 0 else 1
-        # reward -= position
-        # reward += math.sqrt(record)
+            if len(data_close) > 12:  # 5m * 12 = 1h
+                recent_data_close = (
+                    np.diff(data_close) / data_close[:-1] * 100
+                )  # % 변화율
+                variance_penalty = recent_data_close.var()
+                reward -= variance_penalty  # 분산을 패널티로 적용
+                # reward *= 10
+        else:  # hold/open position
+            # reward += roe
+            unrealized_pnl = history["unrealized_pnl", -1]
+            reward += unrealized_pnl * 0.1
+    else:  # close position
         # cummulative_pnl = history["realized_pnl"].sum()
         # reward += cummulative_pnl  # if pnl > 0 else (pnl*2)
+
         reward += pnl
+        # last_diff_position_idx = (
+        #     (len(positions) - 1 - (positions[::-1] != current_position).argmax())
+        #     if (positions != current_position).any()
+        #     else -1
+        # )
+
+        # data_close = history["data_close", last_diff_position_idx + 1 :]
+
+        # if len(data_close) > 1:
+        #     recent_data_close = np.diff(data_close) / data_close[:-1]
+        #     variance_bonus = (
+        #         recent_data_close.var() if len(recent_data_close) > 12 else 0
+        #     )
+        #     reward += variance_bonus
 
     return reward
 
@@ -199,14 +206,18 @@ class DiscretedTradingEnv(gym.Env):
         for i in range(2):
             col = observation[:, i]
             col_range = np.ptp(col)  # 최대값 - 최소값 계산
-            observation[:, i] = np.where(col_range != 0, (col - np.min(col)) / col_range, 0)
+            observation[:, i] = np.where(
+                col_range != 0, (col - np.min(col)) / col_range, 0
+            )
 
         # 3열부터 7열까지 함께 정규화
         cols_to_normalize = slice(2, 7)
         cols = observation[:, cols_to_normalize]
         col_range = np.ptp(cols)  # 전체 범위 계산
-        observation[:, cols_to_normalize] = np.where(col_range != 0, (cols - np.min(cols)) / col_range, 0)
-        
+        observation[:, cols_to_normalize] = np.where(
+            col_range != 0, (cols - np.min(cols)) / col_range, 0
+        )
+
         realized_total_pnl = self.historical_info["realized_pnl"].sum()
         infos = np.array(
             [
@@ -407,8 +418,13 @@ class DiscretedTradingEnv(gym.Env):
         )
 
         if self.liquidation:
-            reward = max(portfolio_value, prev_valuation, self.portfolio_initial_value)
-            # reward *= math.sqrt(self.multiplier[self._multiplier_idx])
+            reward = prev_valuation
+            # max(
+            #     portfolio_value,
+            #     prev_valuation,
+            #     self.portfolio_initial_value,
+            # )
+            reward *= math.sqrt(self.multiplier[self._multiplier_idx])
             reward = -abs(reward)
         else:
             reward = self.reward_function(
