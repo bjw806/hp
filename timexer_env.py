@@ -40,18 +40,22 @@ def basic_reward_function(history: History):
                 recent_data_close = (
                     np.diff(data_close) / data_close[:-1] * 100
                 )  # % 변화율
-                variance_penalty = recent_data_close.var()
+                variance_penalty = recent_data_close.var(ddof=1)
                 reward -= variance_penalty  # 분산을 패널티로 적용
                 # reward *= 10
         else:  # hold/open position
             # reward += roe
-            unrealized_pnl = history["unrealized_pnl", -1]
-            reward += unrealized_pnl * 0.1
+            unrealized_roe = history["unrealized_roe", -1] * 100
+            reward += unrealized_roe * 0.1
+            # unrealized_pnl = history["unrealized_pnl", -1]
+            # reward += unrealized_pnl * 0.1
     else:  # close position
         # cummulative_pnl = history["realized_pnl"].sum()
         # reward += cummulative_pnl  # if pnl > 0 else (pnl*2)
+        realized_roe = history["realized_roe", -1] * 100
+        reward += realized_roe
 
-        reward += pnl
+        # reward += pnl
         # last_diff_position_idx = (
         #     (len(positions) - 1 - (positions[::-1] != current_position).argmax())
         #     if (positions != current_position).any()
@@ -63,9 +67,17 @@ def basic_reward_function(history: History):
         # if len(data_close) > 1:
         #     recent_data_close = np.diff(data_close) / data_close[:-1]
         #     variance_bonus = (
-        #         recent_data_close.var() if len(recent_data_close) > 12 else 0
+        #         recent_data_close.var(ddof=1) if len(recent_data_close) > 12 else 0
         #     )
         #     reward += variance_bonus
+
+        # position bias
+        # pc = np.sum(np.diff(positions) != 0)
+
+        # if pc > 1:
+        #     spr = history["single_position_record"]
+        #     position_balance = spr[spr != 0].mean()
+        #     reward -= abs(position_balance) * 0.1
 
     return reward
 
@@ -289,6 +301,7 @@ class DiscretedTradingEnv(gym.Env):
             realized_roe=0,
             hold_time=0,
             multiplier=rnd_multiplier,
+            single_position_record=self._position,
         )
 
         return self._get_obs(), self.historical_info[0]
@@ -350,7 +363,6 @@ class DiscretedTradingEnv(gym.Env):
         if portfolio_value <= self.portfolio_initial_value * 0.1:
             done = True
             self.liquidation = True
-            # portfolio_value = 1
         if self._idx >= len(self.df) - 1:
             truncated = True
         if (
@@ -415,16 +427,17 @@ class DiscretedTradingEnv(gym.Env):
             realized_roe=realized_roe,
             hold_time=hold_time,
             multiplier=self.multiplier[self._multiplier_idx],
+            single_position_record=self._position if is_position_changed else 0,
         )
 
         if self.liquidation:
-            reward = prev_valuation
-            # max(
-            #     portfolio_value,
-            #     prev_valuation,
-            #     self.portfolio_initial_value,
-            # )
+            reward = max(
+                portfolio_value,
+                prev_valuation,
+                # self.portfolio_initial_value,
+            )
             reward *= math.sqrt(self.multiplier[self._multiplier_idx])
+            # reward *= math.sqrt(self._step)
             reward = -abs(reward)
         else:
             reward = self.reward_function(
