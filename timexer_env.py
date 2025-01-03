@@ -42,20 +42,39 @@ def basic_reward_function(history: History):
                 )  # % 변화율
                 variance_penalty = recent_data_close.var(ddof=1)
                 reward -= variance_penalty  # 분산을 패널티로 적용
+                reward *= len(data_close)
                 # reward *= 10
+
+            l = positions[positions > 0].sum()
+            s = positions[positions < 0].sum()
+            ratio = abs(l - s) / (l + s) if l + s != 0 else 0
+
+            if ratio > 0.7:
+                reward -= ratio
+
         else:  # hold/open position
             # reward += roe
-            unrealized_roe = history["unrealized_roe", -1] * 100
-            reward += unrealized_roe * 0.1
-            # unrealized_pnl = history["unrealized_pnl", -1]
-            # reward += unrealized_pnl * 0.1
+            # unrealized_roe = history["unrealized_roe", -1] * 100
+            # reward += unrealized_roe * 0.1
+            unrealized_pnl = history["unrealized_pnl", -1]
+            reward += unrealized_pnl * 0.1
+
+            if history["hold_time", -1] > 12 * 4:  # 4h
+                reward -= abs(unrealized_pnl) * 0.1
     else:  # close position
         # cummulative_pnl = history["realized_pnl"].sum()
         # reward += cummulative_pnl  # if pnl > 0 else (pnl*2)
-        realized_roe = history["realized_roe", -1] * 100
-        reward += realized_roe
+        # realized_roe = history["realized_roe", -1] * 100
+        # reward += realized_roe
 
-        # reward += pnl
+        reward += pnl
+
+        if history["hold_time", -2] == 1:
+            hold_time = history["hold_time"]
+            h = hold_time[hold_time == 1]
+            # p = positions[positions != 0]
+            reward -= math.sqrt(h.sum())
+
         # last_diff_position_idx = (
         #     (len(positions) - 1 - (positions[::-1] != current_position).argmax())
         #     if (positions != current_position).any()
@@ -400,7 +419,10 @@ class DiscretedTradingEnv(gym.Env):
             #     no_position_panelty -= 0.1
             # else:
             #     no_position_panelty += 0.1
-            hold_time = self.historical_info["hold_time", -1] + 1
+
+            hold_time = (
+                self.historical_info["hold_time", -1] + 1 if self._position != 0 else 0
+            )
 
         self.historical_info.add(
             idx=self._idx,
