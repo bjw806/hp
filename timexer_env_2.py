@@ -45,35 +45,36 @@ def basic_reward_function(history: History):
                 reward *= len(data_close)
                 # reward *= 10
 
-            l = positions[positions > 0].sum()
-            s = positions[positions < 0].sum()
-            ratio = l / (l + s) if (l + s) != 0 else 0.5
-            reward -= abs(ratio - 0.5)
+            # l = positions[positions > 0].sum()
+            # s = positions[positions < 0].sum()
+            # ratio = l / (l + s) if (l + s) != 0 else 0.5
+            # reward -= abs(ratio - 0.5) * len(positions)
 
         else:  # hold/open position
             # reward += roe
-            unrealized_roe = history["unrealized_roe", -1] * 100
-            reward += unrealized_roe * 0.1
-            # unrealized_pnl = history["unrealized_pnl", -1]
-            # reward += unrealized_pnl * 0.1
+            # unrealized_roe = history["unrealized_roe", -1] * 100
+            # reward += unrealized_roe * 0.1
+            unrealized_pnl = history["unrealized_pnl", -1]
+            reward += unrealized_pnl * 0.1
 
-            if history["hold_time", -1] > 12:  # 1h
-                reward -= abs(unrealized_roe) * 0.1
+            # if history["hold_time", -1] > 12:  # 1h
+            #     reward -= math.sqrt(history["hold_time", -1])
     else:  # close position
-        cummulative_pnl = history["realized_pnl"].sum()
+        # cummulative_pnl = history["realized_pnl"].sum()
         # reward += cummulative_pnl  # if pnl > 0 else (pnl*2)
-        total_roe = cummulative_pnl / history["portfolio_valuation", 0] * 100
-        realized_roe = history["realized_roe", -1] * 100
-        reward += realized_roe
-        reward += total_roe
+        # total_roe = cummulative_pnl / history["portfolio_valuation", 0] * 100
+        # realized_roe = history["realized_roe", -1] * 100
+        # reward += realized_roe
+        # reward += total_roe
 
-        # reward += pnl
+        reward += pnl
+        # reward *= math.sqrt(history["hold_time", -2])
 
-        if history["hold_time", -2] == 1:
-            hold_time = history["hold_time"]
-            h = hold_time[hold_time == 1]
-            # p = positions[positions != 0]
-            reward -= math.sqrt(h.sum())
+        # if history["hold_time", -2] == 1:
+        #     hold_time = history["hold_time"]
+        #     h = hold_time[hold_time == 1]
+        #     # p = positions[positions != 0]
+        #     reward -= math.sqrt(h.sum())
 
         # last_diff_position_idx = (
         #     (len(positions) - 1 - (positions[::-1] != current_position).argmax())
@@ -116,7 +117,6 @@ class DiscretedTradingEnv(gym.Env):
         self,
         df: pd.DataFrame,
         positions: list = [-1, 1],
-        multiplier: list = [2, 5, 10],
         dynamic_feature_functions: list = [
             # dynamic_feature_last_position_taken,
             # dynamic_feature_real_position,
@@ -142,7 +142,6 @@ class DiscretedTradingEnv(gym.Env):
 
         # trading
         self.positions = positions
-        self.multiplier = multiplier
         self.trading_fees = trading_fees
         self.borrow_interest_rate = borrow_interest_rate
         self.portfolio_initial_value = float(portfolio_initial_value)
@@ -150,7 +149,6 @@ class DiscretedTradingEnv(gym.Env):
         self.pc_counter = 0
         self.liquidation = False
         self._position_idx = 1
-        self._multiplier_idx = 0
 
         # env
         self._info = [
@@ -159,7 +157,6 @@ class DiscretedTradingEnv(gym.Env):
             "unrealized_total_ROE",
             "unrealized_ROE",
             # "position",
-            # "multiplier",
             # "record",
             "real_position",
         ]
@@ -168,9 +165,7 @@ class DiscretedTradingEnv(gym.Env):
         self.reward_function = reward_function
         self.window_size = window_size
         self._set_df(df)
-        self.action_space = spaces.MultiDiscrete(
-            [len(self.positions), len(self.multiplier)]
-        )
+        self.action_space = spaces.Discrete(len(self.positions))
         self.observation_space = spaces.Dict(
             {
                 "features": spaces.Box(
@@ -260,7 +255,6 @@ class DiscretedTradingEnv(gym.Env):
                 self.historical_info["realized_roe", -1],  # realized_ROE
                 self.historical_info["unrealized_roe", -1],  # unrealized_ROE
                 # self._position,  # position
-                # self.multiplier[self._multiplier_idx] * 0.01,  # multiplier
                 # self.historical_info["record", -1],  # win or lose
                 self.historical_info["position", -1] * 0.01,  # real position
                 # <- too larger than other values (-50 ~ 50)
@@ -282,8 +276,7 @@ class DiscretedTradingEnv(gym.Env):
         self.pc_counter = 0
         self.liquidation = False
         self._step = 0
-        rnd_multiplier = np.random.choice(self.multiplier)
-        self._position = np.random.choice(self.positions) * rnd_multiplier
+        self._position = np.random.choice(self.positions)
         self._limit_orders = {}
         self._idx = self.window_size - 1
 
@@ -319,7 +312,6 @@ class DiscretedTradingEnv(gym.Env):
             realized_pnl=0,
             realized_roe=0,
             hold_time=0,
-            multiplier=rnd_multiplier,
             single_position_record=self._position,
         )
 
@@ -360,8 +352,7 @@ class DiscretedTradingEnv(gym.Env):
 
     def step(self, position_index=None):
         self._position_idx = position_index[0]
-        self._multiplier_idx = position_index[1]
-        pos = self.positions[self._position_idx] * self.multiplier[self._multiplier_idx]
+        pos = self.positions[self._position_idx]
 
         temp_position = self._position
         self._take_action(pos)
@@ -448,7 +439,6 @@ class DiscretedTradingEnv(gym.Env):
             realized_pnl=realized_pnl,
             realized_roe=realized_roe,
             hold_time=hold_time,
-            multiplier=self.multiplier[self._multiplier_idx],
             single_position_record=self._position if is_position_changed else 0,
         )
 
@@ -459,7 +449,6 @@ class DiscretedTradingEnv(gym.Env):
             #     # self.portfolio_initial_value,
             # )
             reward = self.portfolio_initial_value
-            reward *= math.sqrt(self.multiplier[self._multiplier_idx])
             # reward *= math.sqrt(self._step)
             reward = -abs(reward)
         else:
